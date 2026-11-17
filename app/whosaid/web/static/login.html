@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VoxPrism · 로그인</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
+<style>
+  .login { max-width: 420px; margin: 9vh auto 0; }
+  .login .logo { font-size: 30px; display: block; margin-bottom: 4px; }
+  .login form { margin-top: 18px; }
+  .login input[type=password] { font-size: 18px; padding: 12px 14px; }
+  .login .btn { width: 100%; margin-top: 14px; padding: 13px; font-size: 17px; }
+  .login .err { color: var(--err); margin-top: 10px; min-height: 1.4em; }
+</style>
+</head>
+<body>
+<main><div class="wrap">
+  <section class="card login" aria-labelledby="h">
+    <span class="logo"><img class="mark" src="/static/brand/favicon.svg" alt="" width="34" height="34">Vox<b style="color:var(--accent2)">Prism</b></span>
+    <h1 id="h" style="font-size:20px">누가 말했는지 보이는 자막</h1>
+    <p class="muted" style="margin:6px 0 0">시연용 서비스입니다. 안내받은 비밀번호를 입력해 주세요.</p>
+    <form method="post" action="/login">
+      <label class="l" for="pw" style="display:block;font-weight:600;margin-bottom:6px">비밀번호</label>
+      <input type="password" id="pw" name="password" autocomplete="current-password" required autofocus
+             style="width:100%;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--text)">
+      <input type="hidden" name="next" id="next" value="/">
+      <button class="btn primary" type="submit">들어가기</button>
+      <div class="err" id="err" role="alert"></div>
+    </form>
+  </section>
+</div></main>
+<script>
+  const q = new URLSearchParams(location.search);
+  document.getElementById("next").value = q.get("next") || "/";
+  if (q.get("error")) document.getElementById("err").textContent = "비밀번호가 맞지 않아요. 다시 입력해 주세요.";
+</script>
+</body>
+</html>

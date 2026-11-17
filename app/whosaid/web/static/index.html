@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VoxPrism · 누가 말했는지 보이는 자막</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="logo" href="/"><img class="mark" src="/static/brand/favicon.svg" alt="" width="26" height="26">Vox<b>Prism</b></a>
+  <span class="tagline">누가 말했는지 보이는 자막</span>
+  <span class="spacer"></span>
+  <span class="pill" id="pill-clova"><span class="dot"></span>CLOVA Speech</span>
+  <span class="pill" id="pill-diar"><span class="dot"></span>화자 분리</span>
+  <form method="post" action="/logout" style="margin:0"><button class="btn small" type="submit">로그아웃</button></form>
+</div></header>
+
+<main><div class="wrap">
+  <h1>여러 사람이 말하는 영상에, 말한 사람이 보이는 자막을</h1>
+  <p class="sub">예능·회의·인터뷰 영상을 올리면 화자마다 이름과 색을 붙인 자막을 만들고,
+    동시에 말해서 묻힌 말도 분리해서 함께 보여 줍니다.</p>
+
+  <div class="grid2">
+    <section class="card" aria-labelledby="up-h">
+      <h2 id="up-h">영상 올리기</h2>
+      <form id="form">
+        <label class="drop" id="drop" tabindex="0">
+          <input type="file" id="file" class="sr" accept="video/*,audio/*,.mkv,.m4a">
+          <div class="big" id="drop-big">영상 파일을 끌어다 놓거나 눌러서 고르세요</div>
+          <div class="small" id="drop-small">MP4 · MOV · MKV · WEBM · MP3 · M4A · WAV</div>
+        </label>
+        <div class="field">
+          <label class="l" for="title">제목 (선택)</label>
+          <input type="text" id="title" maxlength="80" placeholder="예: 런닝맨 1화 오프닝">
+        </div>
+        <div class="field">
+          <label class="l" for="nspk">출연자 수</label>
+          <select id="nspk">
+            <option value="0">자동으로 찾기</option>
+            <option>2</option><option>3</option><option>4</option><option>5</option><option>6</option>
+            <option>7</option><option>8</option><option>9</option><option>10</option>
+          </select>
+          <div class="hint">알고 있다면 꼭 정해 주세요. 테스트에서 자동일 때보다 화자별 오류가 약 3분의 1 줄었어요.</div>
+        </div>
+        <label class="check"><input type="checkbox" id="recover" checked>
+          <span>겹친 말 복원<small>동시에 말한 구간을 목소리별로 분리해 묻힌 말까지 자막으로 만듭니다.</small></span></label>
+        <label class="check"><input type="checkbox" id="sfx" checked>
+          <span>소리 자막<small>[웃음] · ♪ 음악 ♪ 같은 소리 정보를 함께 표시합니다(도메인이 이벤트 탐지를 지원할 때).</small></span></label>
+        <details><summary>고급 설정</summary>
+          <div class="field">
+            <label class="l" for="engine">음성 인식 엔진</label>
+            <select id="engine">
+              <option value="auto">자동 (CLOVA Speech 우선)</option>
+              <option value="clova">CLOVA Speech</option>
+              <option value="whisper">Whisper (오픈소스, 느림)</option>
+            </select>
+          </div>
+        </details>
+        <div class="field">
+          <button class="btn primary" id="go" type="submit" disabled>자막 만들기</button>
+        </div>
+        <div class="field" id="upwrap" hidden>
+          <div class="bar"><div id="upbar"></div></div>
+          <div class="hint" id="uptext">업로드 중…</div>
+        </div>
+      </form>
+    </section>
+
+    <section class="card" aria-labelledby="how-h">
+      <h2 id="how-h">이렇게 만들어요</h2>
+      <ol class="how">
+        <li><b>음성 인식</b> — 네이버 CLOVA Speech가 한국어 말소리를 단어 단위 시간과 함께 받아 적어요.</li>
+        <li><b>화자 구분</b> — 목소리 특징으로 누가 언제 말했는지, 어디서 말이 겹쳤는지 찾아요.</li>
+        <li><b>겹친 말 복원</b> — 겹친 구간을 목소리별로 분리해 다시 인식하고, 원래 자막에서 빠진 사람의 말을 채워요.</li>
+        <li><b>이름 붙이기</b> — 화자별 장면을 보고 이름을 붙이면 자막에 바로 반영돼요.</li>
+        <li><b>내려받기</b> — SRT · VTT · ASS 자막, 또는 자막을 입힌 MP4.</li>
+      </ol>
+      <p class="muted" id="limits"></p>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:20px" aria-labelledby="jobs-h">
+    <div class="row" style="justify-content:space-between"><h2 id="jobs-h" style="margin:0">최근 작업</h2>
+      <button class="btn small" id="refresh" type="button">새로고침</button></div>
+    <ul class="jobs" id="jobs"><li class="muted">불러오는 중…</li></ul>
+  </section>
+</div></main>
+<footer><div class="wrap">VoxPrism · 네이버 클라우드 소버린 AI 리터러시 프로젝트 · CLOVA Speech + pyannote + SepFormer</div></footer>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="/static/common.js"></script>
+<script src="/static/index.js"></script>
+</body>
+</html>

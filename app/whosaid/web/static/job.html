@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VoxPrism · 작업</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="logo" href="/"><img class="mark" src="/static/brand/favicon.svg" alt="" width="26" height="26">Vox<b>Prism</b></a>
+  <span class="tagline">누가 말했는지 보이는 자막</span>
+  <span class="spacer"></span>
+  <a class="btn small" href="/">← 새 영상 올리기</a>
+  <form method="post" action="/logout" style="margin:0"><button class="btn small" type="submit">로그아웃</button></form>
+</div></header>
+
+<main><div class="wrap">
+  <h1 id="title">불러오는 중…</h1>
+  <p class="sub" id="subtitle"></p>
+
+  <!-- 처리 중 -->
+  <section class="card" id="progress" hidden aria-live="polite">
+    <h2>자막을 만들고 있어요</h2>
+    <div class="bar"><div id="pbar"></div></div>
+    <p id="pmsg" class="muted" style="margin:10px 0 0">대기 중</p>
+    <div class="stages" id="stages"></div>
+    <p class="muted" style="font-size:14px">이 페이지를 닫아도 서버에서 계속 처리됩니다. 나중에 최근 작업 목록에서 다시 열 수 있어요.</p>
+  </section>
+
+  <!-- 오류 -->
+  <section class="errbox" id="error" hidden></section>
+
+  <!-- 결과 -->
+  <section id="result" hidden>
+    <div id="warns"></div>
+    <div class="grid2">
+      <div>
+        <div class="player" id="player">
+          <video id="video" controls playsinline preload="metadata"></video>
+          <div class="capbox top" id="cap-top" aria-hidden="true"></div>
+          <div class="capbox bottom" id="cap-bottom" aria-live="off"></div>
+        </div>
+        <div class="pctrl" role="toolbar" aria-label="자막 설정">
+          <span class="muted">글자</span>
+          <div class="seg" id="seg-size">
+            <button data-v="1" class="on">보통</button><button data-v="1.25">크게</button><button data-v="1.55">아주 크게</button>
+          </div>
+          <span class="muted">위치</span>
+          <div class="seg" id="seg-pos"><button data-v="bottom" class="on">아래</button><button data-v="top">위</button></div>
+          <label class="check" style="margin:0"><input type="checkbox" id="opt-tag" checked><span>이름표</span></label>
+          <label class="check" style="margin:0"><input type="checkbox" id="opt-sfx" checked><span>소리 자막</span></label>
+          <button class="btn small" id="fs" type="button">전체 화면</button>
+        </div>
+        <div class="legend" id="legend"></div>
+        <div class="stats" id="stats"></div>
+
+        <div class="card" style="margin-top:6px">
+          <h2>내려받기</h2>
+          <div class="row">
+            <a class="btn small" id="dl-srt">SRT 자막</a>
+            <a class="btn small" id="dl-vtt">VTT 자막</a>
+            <a class="btn small" id="dl-ass">ASS 자막(색 포함)</a>
+            <a class="btn small" id="dl-json">JSON</a>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <button class="btn primary small" id="render" type="button">자막 입힌 영상(MP4) 만들기</button>
+            <a class="btn small" id="dl-mp4" hidden>자막 입힌 영상 내려받기</a>
+            <span class="muted" id="render-msg" style="font-size:14px"></span>
+          </div>
+          <p class="muted" style="font-size:13px;margin:10px 0 0">SRT/VTT는 대부분의 플레이어·유튜브 자막 업로드에 쓸 수 있고, ASS는 화자별 색까지 유지됩니다(팟플레이어·VLC).</p>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <h2 style="margin:0">화자</h2>
+            <button class="btn primary small" id="save-spk" type="button">이름 저장</button>
+          </div>
+          <p class="muted" style="font-size:14px">장면 사진을 누르면 그 장면으로 이동해요. 같은 사람이 둘로 나뉘었다면 ‘합치기’를 고르세요.</p>
+          <div id="speakers"></div>
+        </div>
+        <div class="card" style="margin-top:20px">
+          <div class="row" style="justify-content:space-between">
+            <h2 style="margin:0">대본</h2>
+            <label class="check" style="margin:0"><input type="checkbox" id="follow" checked><span>재생 위치 따라가기</span></label>
+          </div>
+          <div class="script" id="script" style="margin-top:10px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:24px"><button class="btn small danger" id="del" type="button">이 작업 삭제</button></div>
+  </section>
+</div></main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="/static/common.js"></script>
+<script src="/static/job.js"></script>
+</body>
+</html>
