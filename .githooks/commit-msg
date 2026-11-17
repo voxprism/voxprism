@@ -1,0 +1,4 @@
+#!/bin/sh
+# 커밋 메시지: AI 도구 서명 줄 자동 삭제 + 형식 검사 (규칙: CONTRIBUTING.md)
+# 설치: ./scripts/setup-dev.sh  (git config core.hooksPath .githooks)
+exec python3 "$(git rev-parse --show-toplevel)/scripts/commit_lint.py" --fix "$1"

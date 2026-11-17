@@ -1,0 +1,9 @@
+#!/bin/sh
+# main 에 직접 push 하지 않기 (SDD: 모든 변경은 PR 로). 원격 규칙셋도 같은 것을 막는다.
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ] && [ "${ALLOW_MAIN_PUSH:-0}" != "1" ]; then
+    echo "main 에 직접 push 할 수 없습니다. 브랜치를 만들고 PR 을 여세요: git switch -c feat/spec-NNN-이름" >&2
+    exit 1
+  fi
+done
+exit 0
