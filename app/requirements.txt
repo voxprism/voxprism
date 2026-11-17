@@ -1,0 +1,10 @@
+# torch / torchaudio 는 setup_server.sh 에서 CPU 전용 인덱스로 먼저 설치합니다.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+requests>=2.31
+numpy>=2.0
+soundfile>=0.12
+pyannote.audio==4.1.0
+speechbrain==1.1.2
+faster-whisper==1.2.1
