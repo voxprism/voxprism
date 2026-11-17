@@ -1,0 +1,9 @@
+# CI·로컬 테스트용 가벼운 의존성 (모델·torch 없음). 서버용은 requirements.txt
+fastapi>=0.115
+python-multipart>=0.0.9
+requests>=2.31
+numpy>=2.0
+soundfile>=0.12
+httpx
+pytest
+ruff
