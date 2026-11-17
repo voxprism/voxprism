@@ -1,0 +1,28 @@
+# ── 비밀 값: 절대 커밋하지 않음 (SECURITY.md) ──
+/secrets/
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+*.env
+!*.env.example
+
+# ── 이 PC에만 있는 인프라 상태 (자원 번호·공인 IP·집 IP) ──
+/infra/state.env
+/infra/*.log
+/infra/eval_jobs.txt
+
+# ── 로컬 도구·캐시 ──
+/tools/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+.DS_Store
+
+# ── 개인 Claude Code 설정 ──
+.claude/settings.local.json
+CLAUDE.local.md

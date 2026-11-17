@@ -1,0 +1,11 @@
+# <유형>(<범위>): <요약 — 한국어, 50자 안팎, 마침표 없음>
+#   유형: feat fix docs spec refactor perf test build ci chore revert style
+#   범위: pipeline asr diarize overlap captions web api worker auth infra deploy eval docs spec repo brand
+#
+# <본문 — 무엇을, 왜. 한 줄 72자 안팎>
+#
+# Refs: SPEC-NNN, T-NN      (feat·fix·perf 는 필수)
+# Closes #N
+#
+# AI 도구 서명(Co-Authored-By, Generated with …, 세션 링크)은 넣지 않습니다. 훅이 지웁니다.
+# '#'로 시작하는 줄은 커밋에 들어가지 않습니다.
