@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "includeCoAuthoredBy": false,
+  "permissions": {
+    "deny": [
+      "Read(./secrets/**)",
+      "Edit(./secrets/**)",
+      "Read(./infra/state.env)",
+      "Read(./infra/*.log)",
+      "Read(~/.ncloud/**)",
+      "Read(~/.ssh/**)",
+      "Bash(git commit --no-verify *)",
+      "Bash(git commit -n *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)"
+    ],
+    "ask": [
+      "Bash(./infra/deploy.sh *)",
+      "Bash(./infra/server.sh stop *)",
+      "Bash(./infra/server.sh start *)",
+      "Bash(./infra/create_infra.sh *)",
+      "Bash(./infra/ncloud.sh *)",
+      "Bash(ssh *)",
+      "Bash(git push *)",
+      "Bash(gh pr merge *)",
+      "Bash(gh repo *)",
+      "Bash(gh api *)"
+    ],
+    "allow": [
+      "Bash(python3 scripts/check_specs.py)",
+      "Bash(python3 scripts/new_spec.py *)",
+      "Bash(python3 scripts/commit_lint.py *)",
+      "Bash(./infra/check_keys.sh)",
+      "Bash(./infra/server.sh status)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/session_start.sh\"" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guard_bash.py\"" }
+        ]
+      }
+    ]
+  }
+}
