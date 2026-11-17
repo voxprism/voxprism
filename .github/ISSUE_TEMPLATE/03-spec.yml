@@ -1,0 +1,31 @@
+name: 📐 스펙 작성·개정 (SDD)
+description: specs/ 의 스펙을 새로 쓰거나 고쳐야 해요
+title: "spec: "
+labels: ["📐 spec"]
+body:
+  - type: input
+    id: spec
+    attributes:
+      label: 스펙
+      description: 새 스펙이면 '새로', 개정이면 SPEC-NNN
+      placeholder: SPEC-003
+    validations:
+      required: true
+  - type: textarea
+    id: reason
+    attributes:
+      label: 왜 필요한가요?
+      description: 새 요구사항, 스펙과 코드의 차이, 평가 결과 등 근거
+    validations:
+      required: true
+  - type: textarea
+    id: requirements
+    attributes:
+      label: 관련 요구사항
+      description: docs/01-요구사항-분석.md 의 ID (새로 필요하면 초안)
+      placeholder: FR-OVL-02, NFR-QUAL-01
+  - type: textarea
+    id: impact
+    attributes:
+      label: 영향 범위
+      description: 바뀌는 스펙·설계 문서·코드 영역, 품질 기준선(NFR-QUAL-01)에 영향이 있는지
