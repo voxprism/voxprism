@@ -1,0 +1,18 @@
+[Unit]
+Description=VoxPrism worker (CLOVA Speech + pyannote + SepFormer)
+After=network-online.target
+
+[Service]
+User=whosaid
+Group=whosaid
+EnvironmentFile=/etc/whosaid.env
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/opt/whosaid/app
+ExecStart=/opt/whosaid/venv/bin/python -m whosaid.worker
+Nice=5
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
