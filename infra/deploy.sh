@@ -1,7 +1,8 @@
 #!/bin/bash
-# 소스 업로드 + 키 설정 + 서버 설치.  ./infra/deploy.sh [setup|code]
-#   setup : 처음 1회 (패키지·파이썬 라이브러리·서비스 설치, 10~15분, 백그라운드 실행)
+# 소스 업로드 + 키 설정 + 서버 설치.  ./infra/deploy.sh [setup|code|deps]
+#   setup : 처음 1회 (패키지·파이썬 라이브러리·모델·서비스 설치, 10~15분, 백그라운드 실행)
 #   code  : 코드·nginx 설정만 다시 올리고 서비스 재시작 (기본값)
+#   deps  : code + 라이브러리(requirements.txt)·화면 분석 모델 갱신 (몇 분, 끝날 때까지 기다림)
 set -euo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 ROOT="$(dirname "$HERE")"
@@ -39,6 +40,10 @@ if [ "$MODE" = "setup" ]; then
   echo "[3] 서버 설치 시작 (백그라운드, 로그: /root/whosaid-setup.log)"
   $SSH "$T" "nohup bash /opt/whosaid/app/deploy/setup_server.sh > /root/whosaid-setup.log 2>&1 &"
 else
+  if [ "$MODE" = "deps" ]; then
+    echo "[3a] 라이브러리·화면 분석 모델 갱신"
+    $SSH "$T" "cd /opt/whosaid && UV_CACHE_DIR=/tmp/whosaid-uv uv pip install -q --python /opt/whosaid/venv/bin/python -r app/requirements.txt --constraint <(printf 'torch==2.9.1+cpu\\ntorchaudio==2.9.1+cpu\\n') --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match && rm -rf /tmp/whosaid-uv && bash app/deploy/fetch_models.sh /srv/whosaid/models/vision"
+  fi
   echo "[3] nginx 설정 갱신 + 서비스 재시작"
   $SSH "$T" "install -m 644 /opt/whosaid/app/deploy/nginx-whosaid.conf /etc/nginx/sites-available/whosaid && rm -f /etc/nginx/whosaid.htpasswd && nginx -t -q && systemctl reload nginx && chown -R whosaid:whosaid /opt/whosaid/app && systemctl restart whosaid-web whosaid-worker && systemctl is-active whosaid-web whosaid-worker nginx"
 fi

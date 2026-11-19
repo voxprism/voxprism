@@ -78,44 +78,32 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 16px; }
 .player:fullscreen video { max-height: 100vh; height: 100%; }
 .capbox { position: absolute; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: .35em;
   padding: 0 4%; pointer-events: none; }
-.capbox.top { top: 5%; }
-.player.flip .capbox.top { top: auto; bottom: 7%; }
+.capbox.sfxbox { bottom: max(12%, 58px); }  /* 소리 자막은 아래(대사 자막이 위쪽을 씀) */
 
-/* 고정 위치 말풍선 자막: [줄(lane) 0..N-1] + [화자 표시줄(rail)] — SPEC-008 */
-.capstage { position: absolute; left: 0; right: 0; bottom: max(11%, 54px); display: flex; flex-direction: column; align-items: stretch;
-  gap: .7em; padding: 0 3%; pointer-events: none; }
-.player.flip .capstage { bottom: auto; top: 4%; flex-direction: column-reverse; }
-.capstage .links { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; z-index: 0; }
-.lanes { position: relative; z-index: 1; display: flex; flex-direction: column-reverse; gap: .75em; }
-.player.flip .lanes { flex-direction: column; }
-.lane { min-height: 1.95em; display: flex; justify-content: center; align-items: flex-end; }
-.player.flip .lane { align-items: flex-start; }
+/* 말하는 사람 윤곽(SPEC-009): 영상 위 캔버스 */
+.player canvas.hl { position: absolute; left: 0; top: 0; pointer-events: none; }
+
+/* 위쪽 고정 줄 말풍선 자막(SPEC-008 줄 고정 + SPEC-009 위치·윤곽색) */
+.capstage { position: absolute; left: 0; right: 0; top: 3.5%; padding: 0 3%; pointer-events: none; }
+.lanes { display: flex; flex-direction: column; gap: .45em; }
+.lane { min-height: 1.95em; display: flex; justify-content: center; align-items: flex-start; }
 .cap { position: relative; display: inline-flex; align-items: baseline; gap: .45em; max-width: 94%; padding: .24em .7em .28em .5em;
-  border-radius: .6em; background: rgba(10,12,16,.9); color: var(--c, #fff); font-weight: 700; line-height: 1.35;
-  border: .13em solid var(--c, #fff); text-shadow: 0 1px 2px rgba(0,0,0,.6); }
-.cap::after { /* 말풍선 꼬리: 말하는 사람 쪽으로 */
-  content: ""; position: absolute; left: var(--tx, 50%); top: 100%; width: 0; height: 0; transform: translateX(-50%);
-  border-left: .42em solid transparent; border-right: .42em solid transparent; border-top: .5em solid var(--c, #fff); }
-.player.flip .cap::after { top: auto; bottom: 100%; border-top: 0; border-bottom: .5em solid var(--c, #fff); }
+  border-radius: .6em; background: rgba(10,12,16,.86); color: var(--c, #fff); font-weight: 700; line-height: 1.35;
+  border: .14em solid var(--c, #fff); box-shadow: 0 0 .55em color-mix(in srgb, var(--c, #fff) 45%, transparent);
+  text-shadow: 0 1px 2px rgba(0,0,0,.6); }
 .cap .tag { flex: none; font-size: .78em; padding: .05em .45em; border-radius: .3em; background: var(--c, #fff); color: #0b0d10; font-weight: 800; }
+.cap .off { flex: none; font-size: .68em; padding: .05em .5em; border-radius: 999px; border: .12em dashed var(--c, #fff);
+  color: var(--c, #fff); font-weight: 700; white-space: nowrap; }
+.cap.offscreen { border-style: dashed; }
 .cap .txt { white-space: pre-wrap; word-break: keep-all; }
-.cap.sfx { color: #e5e5e5; font-style: italic; font-weight: 600; border: 0; border-left: .28em solid #888; border-radius: .35em; }
-.cap.sfx::after, .cap.nochip::after { display: none; }
-.cap.ov { box-shadow: 0 0 .5em color-mix(in srgb, var(--c, #fff) 35%, transparent); }
+.cap.sfx { color: #e5e5e5; font-style: italic; font-weight: 600; border: 0; border-left: .28em solid #888; border-radius: .35em; box-shadow: none; }
 .cap.uncertain .tag::after { content: "?"; margin-left: .15em; }
 .notags .cap .tag { display: none; }
-.rail { position: relative; z-index: 1; display: flex; justify-content: space-evenly; gap: .4em; font-size: .72em; }
-.chip { display: inline-flex; align-items: center; gap: .4em; min-width: 0; max-width: 24%; padding: .22em .75em .22em .4em; border-radius: 999px;
-  background: rgba(10,12,16,.8); border: .14em solid color-mix(in srgb, var(--c) 55%, transparent); color: var(--c); font-weight: 700;
-  opacity: .62; transition: opacity .15s, background-color .15s, box-shadow .15s, transform .15s; }
-.chip .dot { flex: none; width: .75em; height: .75em; border-radius: 50%; background: var(--c); }
-.chip .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chip.on { opacity: 1; background: var(--c); color: #0b0d10; border-color: var(--c); transform: scale(1.08);
-  box-shadow: 0 0 0 .2em color-mix(in srgb, var(--c) 40%, transparent), 0 0 1.1em var(--c); }
-.chip.on .dot { background: #0b0d10; animation: talk 0.9s ease-in-out infinite; }
-@keyframes talk { 50% { transform: scale(.55); } }
-@media (prefers-reduced-motion: reduce) { .chip, .chip.on .dot { transition: none; animation: none; } }
-.norail .rail, .norail .links, .norail .cap::after { display: none; }
+.player.compact .lane:empty { min-height: 0; }
+.player.compact .lanes { gap: .3em; }
+.facebox { display: flex; gap: 10px; align-items: center; margin-top: 10px; font-size: 13px; color: var(--muted); }
+.facebox img { width: 52px; height: 52px; object-fit: cover; border-radius: 50%; border: 3px solid var(--c); box-shadow: 0 0 10px var(--c); }
+.facebox.off span { border: 1px dashed var(--line); border-radius: 8px; padding: 4px 8px; }
 .pctrl { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 12px 0 0; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .seg button { border: 0; background: var(--panel2); color: var(--muted); padding: 7px 11px; cursor: pointer; font-size: 14px; }
@@ -149,7 +137,3 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 16px; }
 .toast.show { opacity: 1; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 footer { color: var(--muted); font-size: 13px; padding: 30px 0; border-top: 1px solid var(--line); }
-/* 플레이어가 작아 줄이 넘칠 때만: 빈 줄을 접고 간격을 줄인다 */
-.player.compact .lane:empty { min-height: 0; }
-.player.compact .lanes { gap: .6em; }
-.player.compact .capstage { gap: .5em; }

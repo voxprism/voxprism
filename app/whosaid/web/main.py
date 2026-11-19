@@ -279,7 +279,7 @@ def delete(job_id: str):
     return {"ok": True}
 
 
-MEDIA_RE = re.compile(r"^(preview\.mp4|burned\.mp4|thumbs/S\d+_\d\.jpg)$")
+MEDIA_RE = re.compile(r"^(preview\.mp4|burned\.mp4|thumbs/S\d+_\d\.jpg|faces/P\d+\.jpg|visual\.json)$")
 
 
 @app.get("/media/{job_id}/{rel:path}", include_in_schema=False)

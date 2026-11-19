@@ -34,13 +34,13 @@ def write_all(job_id: str) -> dict:
 
 
 def write_burn(job_id: str):
-    """자막 입힌 MP4용 ASS(고정 줄 말풍선 + 화자 표시줄)를 subs/burn.ass 로 만든다 — SPEC-008."""
+    """자막 입힌 MP4용 ASS(위쪽 고정 줄 말풍선 + 말하는 사람 윤곽)를 subs/burn.ass 로 만든다 — SPEC-008·009."""
     d = store.job_dir(job_id)
     result, spk = effective(job_id)
     v = result.get("video", {})
-    order = [s["id"] for s in result.get("speakers", [])]
+    visual = store.read_json(d / "visual.json", None)
     path = d / "subs" / "burn.ass"
     path.parent.mkdir(exist_ok=True)
-    path.write_text(captions.to_ass_burn(result.get("events", []), spk, order, v.get("width") or 1280,
-                                         v.get("height") or 720), encoding="utf-8")
+    path.write_text(captions.to_ass_burn(result.get("events", []), spk, v.get("width") or 1280,
+                                         v.get("height") or 720, visual), encoding="utf-8")
     return path

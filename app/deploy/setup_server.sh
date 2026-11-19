@@ -39,6 +39,9 @@ uv pip install --python "$VENV/bin/python" -r "$APP/requirements.txt" "torchcode
 rm -rf "$UV_CACHE_DIR"
 chown -R whosaid:whosaid /opt/whosaid
 
+echo "[4b/6] 화면 속 화자 찾기 모델 (SPEC-009)"
+bash "$APP/deploy/fetch_models.sh" /srv/whosaid/models/vision
+
 echo "[5/6] systemd 서비스"
 install -m 644 "$APP/deploy/whosaid-web.service" /etc/systemd/system/whosaid-web.service
 install -m 644 "$APP/deploy/whosaid-worker.service" /etc/systemd/system/whosaid-worker.service

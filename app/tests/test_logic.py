@@ -143,24 +143,93 @@ def test_fit_lines_by_measured_width():
     assert len(lines) == 2 and " ".join(lines) == text
 
 
-def test_burn_ass_rail_bubbles_and_tails():
-    speakers = [{"id": "S1", "name": "화자 1", "color": "#FFD84D"}, {"id": "S2", "name": "화자 2", "color": "#5FD3FF"},
-                {"id": "S3", "name": "화자 3", "color": "#7CF29A"}]
-    spk = captions.resolve_speakers(speakers, {"S3": {"merge_into": "S1"}})
-    ev = [E(0, "S1", 0.0, 2.0, "안녕하세요"), E(1, "S2", 1.0, 3.0, "반가워요"), E(2, "S3", 4.0, 5.0, "네"),
-          E(3, "_sfx", 0.0, 1.0, "[웃음]")]
-    ass = captions.to_ass_burn(ev, spk, ["S1", "S2", "S3"], 1280, 720)
-    lines = ass.splitlines()
-    # 합친 S3는 S1 칩 하나로: 칩(바탕)은 화자 2개
-    base = [x for x in lines if x.startswith("Dialogue: 4,")]
-    assert len(base) == 2
-    # S1은 0~2초, 4~5초(합친 S3)에 칩이 켜진다
-    on = [x for x in lines if x.startswith("Dialogue: 7,")]
-    assert any("0:00:00.00,0:00:02.00" in x for x in on) and any("0:00:04.00,0:00:05.00" in x for x in on)
-    # 말풍선 글자는 화자 색(ASS는 BGR) — S2 #5FD3FF → &H00FFD35F
-    assert any("Bubble" in x and "반가워요" in x and "&H00FFD35F" in x for x in lines)
-    # S2(두 번째 줄)는 S1보다 위에 놓인다
-    y = {t: float(x.split("\\pos(")[1].split(",")[1].split(")")[0]) for x in lines if "Bubble" in x
-         for t in ("안녕하세요", "반가워요") if t in x}
-    assert y["반가워요"] < y["안녕하세요"]
+def test_burn_ass_top_lanes_offscreen_and_outlines():
+    speakers = [{"id": "S1", "name": "화자 1", "color": "#FFD84D"}, {"id": "S2", "name": "화자 2", "color": "#5FD3FF"}]
+    spk = captions.resolve_speakers(speakers, {})
+    ev = [E(0, "S1", 0.0, 2.0, "안녕하세요"), E(1, "S2", 1.0, 3.0, "반가워요"), E(2, "_sfx", 0.0, 1.0, "[웃음]")]
+    ev[1]["offscreen"] = True
+    vis = {"fps": 5, "frames": [{"t": 0.4, "hl": [{"spk": "S1", "poly": [[0.1, 0.2], [0.3, 0.2], [0.2, 0.9]]}]}]}
+    lines = captions.to_ass_burn(ev, spk, 1280, 720, vis).splitlines()
+    bub = {t: x for x in lines if "Bubble," in x for t in ("안녕하세요", "반가워요") if t in x}
+    y = {t: float(x.split("\\pos(")[1].split(",")[1].split(")")[0]) for t, x in bub.items()}
+    assert y["안녕하세요"] < y["반가워요"] < 720 * 0.3          # 위쪽, 먼저 시작한 말이 첫 줄
+    assert "[화면 밖]" in bub["반가워요"] and "[화면 밖]" not in bub["안녕하세요"]
+    assert "&H00FFD35F" in bub["반가워요"]                      # 글자·테두리 = 화자 색(BGR)
+    outl = [x for x in lines if x.startswith("Dialogue: 0,0:00:00.30,0:00:00.50,Shape")]
+    assert outl and "m 128 144 l 384 144 256 648" in outl[0] and "&H004DD8FF" in outl[0]
     assert any(x.startswith("Dialogue: 9,") and "[웃음]" in x for x in lines)
+
+
+# ───────────── SPEC-009: 화면 속 화자 · 잡음 ─────────────
+
+def test_link_tracks_iou_and_cut():
+    from whosaid.pipeline import visual as V
+    z = np.zeros((5, 2), np.float32)
+    d = lambda t, x: V.Det(t=t, box=(x, 10, 40, 40), lm=z, score=0.9)  # noqa: E731
+    frames = [(0.0, [d(0.0, 10), d(0.0, 200)]), (0.1, [d(0.1, 12), d(0.1, 202)]), (0.2, [d(0.2, 14)]),
+              (0.3, [d(0.3, 16)])]
+    tr = V.link_tracks(frames, cuts={0.3})
+    assert sorted(len(t.dets) for t in tr) == [1, 2, 3]  # 장면 전환(0.3)에서 끊김
+
+
+def test_cluster_same_person():
+    from whosaid.pipeline import visual as V
+    rng = np.random.default_rng(0)
+    a, b = rng.normal(size=128), rng.normal(size=128)
+    embs = [a + 0.2 * rng.normal(size=128), a + 0.2 * rng.normal(size=128), b + 0.2 * rng.normal(size=128)]
+    lab = V.cluster(embs, 0.42)
+    assert lab[0] == lab[1] != lab[2]
+
+
+def _obs(times, act):
+    return [(round(t, 2), act(t)) for t in times]
+
+
+def test_associate_cooccurrence_and_lips():
+    from whosaid.pipeline import visual as V
+    # A가 0~10초, B가 10~20초 말함. P1은 0~12초 보이고 A 때 입을 움직임. P2는 8~20초 보이고 B 때 움직임.
+    # 8~10초에는 둘 다 보이는데 A가 말하므로 P1 입만 움직임(여러 얼굴 대비).
+    excl = [{"start": 0, "end": 10, "speaker": "A"}, {"start": 10, "end": 20, "speaker": "B"}]
+    ts = np.arange(0, 20, 0.1)
+    p1 = _obs([t for t in ts if t < 12], lambda t: 1.0 if t < 10 else 0.1)
+    p2 = _obs([t for t in ts if t >= 8], lambda t: 1.0 if t >= 10 else 0.1)
+    mapping, table = V.associate({"P1": p1, "P2": p2}, excl)
+    assert mapping == {"A": "P1", "B": "P2"}
+    assert table[("P1", "A")]["multi"] > 0 > table[("P2", "A")]["multi"]
+
+
+def test_associate_refuses_without_evidence():
+    from whosaid.pipeline import visual as V
+    # 화자 B는 P1이 보일 때 1초만 말함 → 근거 부족, 연결하지 않음. 화자 C는 P1이 보일 때 말한 적이 없음.
+    excl = [{"start": 0, "end": 1, "speaker": "B"}, {"start": 30, "end": 40, "speaker": "C"}]
+    p1 = _obs(np.arange(0, 10, 0.1), lambda t: 0.5)
+    mapping, _ = V.associate({"P1": p1}, excl)
+    assert mapping == {}
+
+
+def test_offscreen_flags():
+    from whosaid.pipeline import visual as V
+    ev = [E(0, "S1", 0, 2), E(1, "S1", 5, 7), E(2, "S2", 0, 1), E(3, "_sfx", 0, 1)]
+    V.offscreen_flags(ev, {"S1": [[0.0, 2.5]]}, {"S1"}, any_face=True)
+    assert [e["offscreen"] for e in ev] == [False, True, True, False]
+    V.offscreen_flags(ev, {}, set(), any_face=False)  # 얼굴이 하나도 없는 영상은 표시하지 않음
+    assert not any(e["offscreen"] for e in ev)
+
+
+def test_intervals():
+    from whosaid.pipeline import visual as V
+    assert V.intervals([0.0, 0.1, 0.2, 1.0], 0.1) == [[0.0, 0.3], [1.0, 1.1]]
+
+
+def test_noise_filter_words_and_speakers():
+    from whosaid.pipeline import noise
+    ws = [{"start": 0.0, "end": 0.3, "text": "네", "conf": 0.9}, {"start": 0.4, "end": 0.8, "text": "맞아요", "conf": 0.2},
+          {"start": 5.0, "end": 5.2, "text": "쿵", "conf": 0.4}, {"start": 9.0, "end": 9.3, "text": "와", "conf": 0.9}]
+    kept, n = noise.filter_words(ws, "clova")
+    assert [w["text"] for w in kept] == ["네", "와"] and n == 2  # 낮은 신뢰도, 신뢰도 낮은 외톨이
+    junk = [{"start": 10 + i * 0.3, "end": 10.25 + i * 0.3, "text": x, "conf": 0.9}
+            for i, x in enumerate(["시청해", "주셔서", "감사합니다."])]
+    kept, n = noise.filter_words(ws[:1] + junk, "whisper")
+    assert [w["text"] for w in kept] == ["네"] and n == 3
+    turns = [{"start": 0, "end": 10, "speaker": "A"}, {"start": 10, "end": 10.6, "speaker": "N"}]
+    assert noise.noise_speakers(turns, [{"start": 10.1, "end": 10.3, "text": "흠"}]) == {"N"}
