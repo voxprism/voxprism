@@ -1,9 +1,10 @@
 (() => {
   const jobId = location.pathname.split("/").filter(Boolean).pop();
   const STAGES = [["prepare", "준비"], ["asr", "음성 인식"], ["diarize", "화자 구분"], ["overlap", "겹친 말 복원"], ["captions", "자막 생성"]];
-  const video = $("#video"), capTop = $("#cap-top"), capBottom = $("#cap-bottom");
+  const video = $("#video"), capTop = $("#cap-top"), capBottom = $("#cap-bottom"), rail = $("#rail"), links = $("#links");
   let job = null, events = [], disp = {}, speakers = [], pollTimer = null, renderTimer = null;
-  let scale = 1, showTags = true, showSfx = true, lastKey = "", lastActiveIds = "";
+  let scale = 1, showTags = true, showSfx = true, showRail = true, lastKey = "", lastActiveIds = "";
+  let laneOf = {}, laneEls = [];
 
   const who = (sid) => disp[sid] || { id: sid, name: "?", color: "#fff" };
 
@@ -63,6 +64,7 @@
     ].map(([n, k]) => `<div class="stat"><div class="n">${esc(n ?? 0)}</div><div class="k">${k}</div></div>`).join("");
     for (const k of ["srt", "vtt", "ass", "json"]) $(`#dl-${k}`).href = `/api/jobs/${jobId}/download/${k}`;
     renderLegend();
+    renderStage();
     renderSpeakers();
     renderScript();
     renderRender(job.render);
@@ -111,12 +113,78 @@
     $$("#script .line").forEach((el) => el.addEventListener("click", () => { video.currentTime = +el.dataset.t + 0.01; video.play(); }));
   }
 
-  // ───── 자막 오버레이 ─────
+  // ───── 자막 오버레이 (SPEC-008: 고정 줄 말풍선 + 말하는 사람 표시줄) ─────
+  // 줄 배정: 시작 순서대로 비어 있는 가장 아래 줄에 넣고, 끝날 때까지 그 줄에서 움직이지 않는다.
+  // 같은 규칙을 MP4용 captions.assign_lanes 가 쓴다.
+  function assignLanes(evs) {
+    const ends = [], lane = {};
+    const dialog = evs.filter((e) => e.speaker !== "_sfx").slice().sort((a, b) => a.start - b.start || a.id - b.id);
+    for (const e of dialog) {
+      let i = ends.findIndex((t) => t <= e.start + 1e-6);
+      if (i < 0) { i = ends.length; ends.push(0); }
+      ends[i] = e.end;
+      lane[e.id] = i;
+    }
+    return { lane, n: Math.max(1, ends.length) };
+  }
+
+  function railIds() {
+    const seen = new Set();
+    return speakers.map((sp) => who(sp.id).id).filter((id) => !seen.has(id) && seen.add(id));
+  }
+
+  function renderStage() {
+    const { lane, n } = assignLanes(events);
+    laneOf = lane;
+    capBottom.innerHTML = Array.from({ length: n }, (_, i) => `<div class="lane" data-lane="${i}"></div>`).join("");
+    laneEls = $$(".lane", capBottom);
+    rail.innerHTML = railIds().map((id) => {
+      const d = who(id);
+      return `<span class="chip" data-id="${esc(id)}" style="--c:${esc(d.color)}"><span class="dot"></span><span class="nm">${esc(d.name)}</span></span>`;
+    }).join("");
+    lastKey = "";
+  }
+
   function capHTML(e) {
     const d = who(e.speaker);
     if (e.speaker === "_sfx") return `<div class="cap sfx"><span class="txt">${esc(e.text)}</span></div>`;
-    return `<div class="cap ${e.overlap ? "ov" : ""} ${e.uncertain ? "uncertain" : ""}" style="--c:${esc(d.color)}">
+    const chip = rail.querySelector(`.chip[data-id="${CSS.escape(d.id)}"]`);
+    return `<div class="cap ${e.overlap ? "ov" : ""} ${e.uncertain ? "uncertain" : ""} ${chip ? "" : "nochip"}" data-spk="${esc(d.id)}" style="--c:${esc(d.color)}">
       <span class="tag">${esc(d.name)}</span><span class="txt">${esc(e.text)}</span></div>`;
+  }
+
+  // 말풍선 꼬리를 그 사람 칩 쪽으로 옮기고, 칩까지 같은 색 선으로 잇는다.
+  function fitStage() {
+    const player = $("#player"), stage = $("#capstage");
+    player.classList.remove("compact");
+    const pr = player.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+    if (sr.top < pr.top + 4 || sr.bottom > pr.bottom - 4) player.classList.add("compact");
+  }
+
+  function layoutLinks() {
+    fitStage();
+    const stage = $("#capstage"), sr = stage.getBoundingClientRect();
+    const flip = $("#player").classList.contains("flip");
+    let paths = "";
+    for (const cap of $$(".cap[data-spk]", capBottom)) {
+      const chip = rail.querySelector(`.chip[data-id="${CSS.escape(cap.dataset.spk)}"]`);
+      if (!chip) continue;
+      const cr = cap.getBoundingClientRect(), hr = chip.getBoundingClientRect();
+      const em = parseFloat(getComputedStyle(cap).fontSize) || 16;
+      const cx = hr.left + hr.width / 2;
+      const r = Math.min(em * 0.9, cr.width / 2);
+      const tx = Math.max(r, Math.min(cr.width - r, cx - cr.left));
+      cap.style.setProperty("--tx", `${tx}px`);
+      const x0 = cr.left + tx - sr.left, x1 = cx - sr.left;
+      const y0 = (flip ? cr.top - em * 0.5 : cr.bottom + em * 0.5) - sr.top;
+      const y1 = (flip ? hr.bottom : hr.top) - sr.top;
+      if (Math.abs(y1 - y0) > 1) {
+        const d = `M${x0.toFixed(1)} ${y0.toFixed(1)} L${x1.toFixed(1)} ${y1.toFixed(1)}`;
+        paths += `<path d="${d}" stroke="rgba(0,0,0,.65)" stroke-width="${(em * 0.26).toFixed(1)}" stroke-linecap="round"/>`
+          + `<path d="${d}" stroke="${esc(cap.style.getPropertyValue("--c"))}" stroke-width="${(em * 0.12).toFixed(1)}" stroke-linecap="round"/>`;
+      }
+    }
+    links.innerHTML = paths;
   }
 
   function tick() {
@@ -131,8 +199,15 @@
     const key = active.map((e) => e.id).join(",") + `|${showSfx}|${showTags}`;
     if (key !== lastKey) {
       lastKey = key;
-      capBottom.innerHTML = dialog.map(capHTML).join("");
+      laneEls.forEach((el) => { el.innerHTML = ""; });
+      for (const e of dialog) {
+        const el = laneEls[laneOf[e.id] ?? 0] || laneEls[0];
+        if (el) el.insertAdjacentHTML("beforeend", capHTML(e));
+      }
       capTop.innerHTML = sfx.map(capHTML).join("");
+      const talking = new Set(dialog.map((e) => who(e.speaker).id));
+      $$(".chip", rail).forEach((c) => c.classList.toggle("on", talking.has(c.dataset.id)));
+      layoutLinks();
       // 화면 읽기 프로그램용: 새로 나타난 자막만 읽도록
       capBottom.setAttribute("aria-label", dialog.map((e) => `${who(e.speaker).name}: ${e.text}`).join(" / "));
     }
@@ -154,7 +229,8 @@
   function resizeCaps() {
     const w = $("#player").clientWidth || 640;
     const px = Math.max(15, Math.min(64, w * 0.03 * scale));
-    capBottom.style.fontSize = capTop.style.fontSize = `${px}px`;
+    $("#capstage").style.fontSize = capTop.style.fontSize = `${px}px`;
+    layoutLinks();
   }
   new ResizeObserver(resizeCaps).observe($("#player"));
   document.addEventListener("fullscreenchange", resizeCaps);
@@ -166,8 +242,9 @@
     }));
   }
   segment("seg-size", (v) => { scale = +v; resizeCaps(); });
-  segment("seg-pos", (v) => { [capTop, capBottom].forEach((c) => c.classList.toggle("pos-top", v === "top")); });
+  segment("seg-pos", (v) => { $("#player").classList.toggle("flip", v === "top"); layoutLinks(); });
   $("#opt-tag").addEventListener("change", (e) => { showTags = e.target.checked; $("#player").classList.toggle("notags", !showTags); lastKey = ""; });
+  $("#opt-rail").addEventListener("change", (e) => { showRail = e.target.checked; $("#player").classList.toggle("norail", !showRail); lastKey = ""; });
   $("#opt-sfx").addEventListener("change", (e) => { showSfx = e.target.checked; lastKey = ""; });
   $("#fs").addEventListener("click", () => {
     const p = $("#player");
