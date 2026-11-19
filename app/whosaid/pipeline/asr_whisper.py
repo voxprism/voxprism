@@ -24,10 +24,23 @@ def get_model():
         return _model
 
 
+def _load_16k(path: Path):
+    """16kHz 모노 float32 배열. faster-whisper에 파일 경로를 주면 PyAV로 다시 디코딩하는데,
+    PyAV 19에서 faster-whisper 1.2.1이 쓰는 인자(metadata_errors)가 없어져 실패하므로 직접 읽어 넘긴다."""
+    import numpy as np
+    import soundfile as sf
+    wav, sr = sf.read(str(path), dtype="float32", always_2d=True)
+    wav = wav.mean(axis=1)
+    if sr != 16000:
+        n = int(round(len(wav) * 16000 / sr))
+        wav = np.interp(np.linspace(0, len(wav) - 1, n), np.arange(len(wav)), wav).astype(np.float32)
+    return wav
+
+
 def recognize_words(path: Path, vad: bool = True) -> list[dict]:
     model = get_model()
     segments, _info = model.transcribe(
-        str(path), language="ko", beam_size=5, word_timestamps=True,
+        _load_16k(path), language="ko", beam_size=5, word_timestamps=True,
         vad_filter=vad, condition_on_previous_text=False,
     )
     words: list[dict] = []
