@@ -1,0 +1,89 @@
+---
+spec: SPEC-009
+status: 승인
+updated: 2026-11-19
+---
+
+# SPEC-009 설계
+
+## 1. 접근
+
+새 단계 **화면 속 화자 찾기**(`pipeline/visual.py`)를 겹친 말 복원 뒤, 자막 생성 앞에 넣습니다. 모델은 모두 CPU용 ONNX입니다.
+
+```text
+미리보기 영상 ─ffmpeg 10fps─▶ YuNet 얼굴+5점 ─IoU─▶ 얼굴 트랙 ─(장면 전환에서 끊음)
+                                   │                    │
+                                   ├─ 입 조각 차이 − 0.6×눈 조각 차이 = 입 움직임
+                                   └─ SFace 특징(초당 2번) → 트랙 평균 → 평균 연결 군집 → 사람 P1, P2…
+화자 분리(혼자 말하는 구간) ──────────────────────────▶ 얼굴–목소리 연결(점수, 1:1)
+                                                         │
+미리보기 영상 ─ffmpeg 5fps─▶ (연결된 사람이 보이고 그 목소리가 나오는 프레임만) YOLO11n-seg 사람 분할
+                                                         └─▶ 얼굴 가운데를 품은 사람 마스크 → 윤곽 다각형(≤64점)
+```
+
+### 1.1 얼굴–목소리 연결 점수 (개발 샘플로 정함)
+
+개발 샘플(왕립학회 2인 인터뷰 150초, CC BY)에서 트랙마다 입 움직임을 살펴보니, 한 장면(트랙) 안에서는 한 화자만 말하는 경우가
+대부분이라 "같은 사람 안에서 말할 때와 안 할 때 비교"만으로는 차이가 작았습니다(효과 크기 0.1 안팎). 반대로
+
+- **동시 출현**: 그 사람 얼굴이 보이며 누군가 말한 시간 중 화자 S가 말한 비율 — 맞는 쌍 0.85~0.86, 틀린 쌍 0.14~0.15
+- **함께 보인 얼굴 사이 입 움직임 대비**: 둘이 같이 걷는 장면에서 말하는 쪽 +0.55, 듣는 쪽 −1.04
+
+이 뚜렷해서 아래 점수를 씁니다.
+
+`score = cooc + 0.3·clip(within, ±2) + 0.3·clip(multi, ±2)`,
+연결 조건: 근거(보이며 S가 말한 시간) ≥ 1.5초, cooc ≥ 0.5, score ≥ 0.6, within ≥ −0.3, multi ≥ −0.5. 점수 큰 순서로 1:1.
+
+동시 출현만 쓰면 "말 없는 사람 위 내레이션"(B-roll)을 잘못 잇게 되므로, 입 움직임 대비가 반대로 나오면 막습니다.
+
+### 1.2 화면 밖 판정
+
+화자 S가 연결된 사람 P의 얼굴이 보인 구간(10fps 샘플 → 이어진 구간)과 자막 시간의 겹침이 30% 미만이면 '화면 밖'.
+연결 안 된 화자는 늘 '화면 밖'. 영상 전체에 얼굴 트랙이 하나도 없으면 아무것도 표시하지 않습니다(음성·그림 영상).
+
+## 2. 바뀌는 곳
+
+| 영역 | 파일·함수 | 변경 |
+| --- | --- | --- |
+| 파이프라인 | `pipeline/visual.py` (새) | `read_frames`, `link_tracks`, `set_activity`, `cluster`, `associate`, `intervals`, `offscreen_flags`, `PersonSeg`, `outline`, `pick_person`, `analyze`, `save_faces` |
+| 파이프라인 | `pipeline/noise.py` (새) | `filter_words`, `noise_speakers` |
+| 파이프라인 | `pipeline/run.py` | 단계 `visual`(74~93%), 잡음 거르기, `_apply_visual`(S 번호로 바꿔 `visual.json`·`faces/`·`offscreen`·화자 카드 얼굴), 통계 4개 |
+| 설정 | `config.VISION_DIR` | `MODEL_DIR/vision` |
+| MP4 | `captions.to_ass_burn` | 표시줄 없앰 → 위쪽 줄 말풍선 + 윤곽 도형(0.2초) + `[화면 밖]` |
+| 웹 | `job.html/js`, `app.css` | 윤곽 캔버스(`drawHighlights`, 영상 실제 영역 계산), 위쪽 줄, '화면 밖' 표시, 화자 카드 얼굴, 단계 6개, '위치' 설정 없앰 |
+| 웹 API | `web/main.py`, `deploy/nginx-whosaid.conf` | 미디어 허용 목록에 `faces/P<n>.jpg`, `visual.json`(캐시 안 함) |
+| 운영 | `deploy/fetch_models.sh`(새), `setup_server.sh`, `infra/deploy.sh deps` | 모델 3개 준비(HF에서 받기, YOLO는 임시 환경에서 ONNX 내보내기), opencv·onnxruntime 설치 |
+
+## 3. 데이터·API 변경
+
+- `visual.json`: `{version, fps, size, people[{id, speaker, seconds, tracks}], speaker_face{S: P}, scores[…], visible{S: [[a,b]]}, any_face, frames[{t, hl[{spk, poly[[x,y]…], face[x,y,w,h]}]}]}` — 좌표는 0~1.
+- `result.json`: 이벤트에 `offscreen`, 화자에 `person`·`face`, 통계에 `noise_words`·`noise_speakers`·`onscreen_speakers`·`offscreen_lines`, `timings.visual`.
+- 하위 호환: `visual.json`이 없는 예전 작업은 윤곽·'화면 밖' 없이 그대로 보임.
+
+## 4. 대안
+
+| 대안 | 장점 | 단점 | 결정 |
+| --- | --- | --- | --- |
+| 시청각 화자 검출 모델(TalkNet·Light-ASD) | 프레임 단위로 정확 | 얼굴 트랙마다 오디오·영상 모델 → CPU 시간, 학습 데이터(영어 영화)와 예능 차이 검증 필요 | 다음 단계 |
+| 얼굴 상자만 강조 | 빠름 | 요구가 "겉 윤곽" | 버림(분할 실패 시 대체로만 씀) |
+| 사람 분할 Mask R-CNN(torchvision, BSD) | 라이선스 자유로움 | CPU에서 프레임당 수 초 | 버림 |
+| YOLO11n-seg ONNX(AGPL-3.0 가중치) | CPU에서 빠름, 인스턴스 윤곽 | 라이선스 | **채택**, 열린 질문으로 남김 |
+| 동시 출현만으로 연결 | 단순 | 내레이션 B-roll 오연결 | 입 움직임 대비와 결합 |
+
+## 5. 테스트·평가 계획
+
+- 단위 테스트: 트랙 연결·장면 전환, 군집, 연결(맞는 쌍·근거 부족 거부), 화면 밖 판정, 구간, 잡음 거르기, MP4 ASS(위쪽 줄·화면 밖·윤곽).
+- 개발 샘플: 연결 결과 P1=S01(점수 1.01), P3=S00(0.88), 틀린 쌍 0.07/−0.19. 9개 장면 육안 확인(말하는 사람만 강조, 듣는 사람·뒷모습은 강조 없음).
+- 서버: 샘플을 다시 처리해 처리 시간(`timings.visual`) 측정, 웹·MP4 화면 확인.
+- 평가(NFR-QUAL-01): 음성 쪽은 잡음 거르기만 바뀜 → 합성 평가셋 v2로 cpCER·겹친 발화 재현율 다시 측정.
+- 남은 일: 사용자가 올린 실제 예능 클립으로 연결 정확도·강조 정밀도 측정(PRD 지표).
+
+## 6. 배포·되돌리기
+
+- 배포: `./infra/deploy.sh deps` (라이브러리·모델 포함) → 이후 코드만 바뀌면 `code`.
+- 되돌리기: squash 커밋 revert 후 `deploy.sh code`. 모델 폴더는 남아도 무해.
+
+## 7. 위험
+
+- 4명 이상·빠른 편집·자막 그래픽이 많은 예능에서 얼굴 트랙이 짧아 근거가 부족할 수 있음 → 연결 안 됨('화면 밖'으로 보임)이 오연결보다 안전.
+- 처리 시간: 샘플 150초 기준 컨테이너 2코어에서 47초 → 서버 8코어에서 측정 필요.
