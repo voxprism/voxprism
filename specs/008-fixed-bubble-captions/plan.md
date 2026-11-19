@@ -1,6 +1,6 @@
 ---
 spec: SPEC-008
-status: 승인
+status: 구현됨
 updated: 2026-11-19
 ---
 

@@ -1,7 +1,7 @@
 ---
 id: SPEC-008
 title: 고정 위치 말풍선 자막과 말하는 사람 표시
-status: 승인
+status: 구현됨
 owner: "@Movinggun-bit"
 requirements: [FR-VIEW-03, FR-VIEW-08, FR-VIEW-09, FR-VIEW-10, NFR-A11Y-01]
 updated: 2026-11-19
@@ -83,3 +83,4 @@ updated: 2026-11-19
 | 날짜 | 내용 |
 | --- | --- |
 | 2026-11-19 | 사용자 요청으로 작성·승인 |
+| 2026-11-19 | 구현·배포 완료 |
