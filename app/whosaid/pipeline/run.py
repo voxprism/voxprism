@@ -263,7 +263,7 @@ def render(job_id: str) -> None:
     store.write_json(d / "render.json", {"state": "running", "started_at": time.time()})
     try:
         subtitles.write_all(job_id)
-        media.burn_in(d / "preview.mp4", d / "subs" / "whosaid.ass", d / "burned.mp4")
+        media.burn_in(d / "preview.mp4", subtitles.write_burn(job_id), d / "burned.mp4")
         store.write_json(d / "render.json", {"state": "done", "finished_at": time.time()})
     except Exception as e:  # noqa: BLE001
         log.exception("렌더 실패 %s", job_id)
