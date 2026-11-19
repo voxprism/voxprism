@@ -119,6 +119,7 @@ def _apply_visual(d: Path, V: dict | None, speakers: list[dict], id_map: dict[st
             frames.append({"t": f["t"], "hl": hl})
     out = {k: v for k, v in V.items() if not k.startswith("_")}
     out.update({"speaker_face": face_of, "visible": visible, "frames": frames,
+                "people": [dict(x, speaker=id_map.get(x["speaker"])) if x.get("speaker") else x for x in V["people"]],
                 "scores": [dict(x, speaker=id_map.get(x["speaker"], x["speaker"])) for x in V["scores"]]})
     store.write_json(d / "visual.json", out)
     return len(face_of)
