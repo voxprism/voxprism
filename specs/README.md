@@ -11,6 +11,7 @@
 | SPEC-005 | [005-access-control](005-access-control/spec.md) | 접근 제어 | 구현됨 | FR-AUTH-01~06 |
 | SPEC-006 | [006-ncp-deploy](006-ncp-deploy/spec.md) | 네이버 클라우드 인프라와 배포 | 구현됨 | FR-OPS-01~06 |
 | SPEC-007 | [007-evaluation](007-evaluation/spec.md) | 품질 평가 체계 | 구현됨 | FR-EVAL-01~04 |
+| SPEC-008 | [008-fixed-bubble-captions](008-fixed-bubble-captions/spec.md) | 고정 위치 말풍선 자막과 말하는 사람 표시 | 구현됨 | FR-VIEW-03, FR-VIEW-08~10 |
 
 새 스펙: `python3 scripts/new_spec.py <영문-이름> "<제목>"` (Claude Code에서는 `/sdd-spec <설명>`). 만든 뒤 이 표에 한 줄을 더합니다.
 검사: `python3 scripts/check_specs.py` (CI에서도 실행).

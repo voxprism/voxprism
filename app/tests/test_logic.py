@@ -120,3 +120,47 @@ def test_batch_map_back(tmp_path):
              {"start": off1 + 1.1, "end": off1 + 1.4, "text": "나"}]
     per = overlap.map_back(words, idx, [p])
     assert per[(0, 0)][0]["start"] == 5.2 and per[(0, 1)][0]["text"] == "나"
+
+
+def E(i, spk, s, e, text="말"):
+    return {"id": i, "speaker": spk, "start": s, "end": e, "text": text, "overlap": False}
+
+
+def test_assign_lanes_fixed_position():
+    # SPEC-008: 비어 있는 가장 아래 줄에 넣고, 끝날 때까지 줄을 바꾸지 않는다
+    ev = [E(0, "S1", 0.0, 4.0), E(1, "S2", 1.0, 2.0), E(2, "S3", 1.5, 3.0), E(3, "S2", 2.5, 5.0),
+          E(4, "_sfx", 0.0, 9.0), E(5, "S1", 6.0, 7.0)]
+    lane, n = captions.assign_lanes(ev)
+    assert lane == {0: 0, 1: 1, 2: 2, 3: 1, 5: 0} and n == 3
+    assert 4 not in lane  # 소리 자막은 줄을 차지하지 않음
+
+
+def test_fit_lines_by_measured_width():
+    m = captions._Measure()
+    text = "그녀는 그 과정을 힘들어하지 않고 재미있게 받아들인다"
+    assert captions._fit_lines(text, 30, 10_000, m) == [text]
+    lines = captions._fit_lines(text, 30, m(text, 30) * 0.6, m)
+    assert len(lines) == 2 and " ".join(lines) == text
+
+
+def test_burn_ass_rail_bubbles_and_tails():
+    speakers = [{"id": "S1", "name": "화자 1", "color": "#FFD84D"}, {"id": "S2", "name": "화자 2", "color": "#5FD3FF"},
+                {"id": "S3", "name": "화자 3", "color": "#7CF29A"}]
+    spk = captions.resolve_speakers(speakers, {"S3": {"merge_into": "S1"}})
+    ev = [E(0, "S1", 0.0, 2.0, "안녕하세요"), E(1, "S2", 1.0, 3.0, "반가워요"), E(2, "S3", 4.0, 5.0, "네"),
+          E(3, "_sfx", 0.0, 1.0, "[웃음]")]
+    ass = captions.to_ass_burn(ev, spk, ["S1", "S2", "S3"], 1280, 720)
+    lines = ass.splitlines()
+    # 합친 S3는 S1 칩 하나로: 칩(바탕)은 화자 2개
+    base = [x for x in lines if x.startswith("Dialogue: 4,")]
+    assert len(base) == 2
+    # S1은 0~2초, 4~5초(합친 S3)에 칩이 켜진다
+    on = [x for x in lines if x.startswith("Dialogue: 7,")]
+    assert any("0:00:00.00,0:00:02.00" in x for x in on) and any("0:00:04.00,0:00:05.00" in x for x in on)
+    # 말풍선 글자는 화자 색(ASS는 BGR) — S2 #5FD3FF → &H00FFD35F
+    assert any("Bubble" in x and "반가워요" in x and "&H00FFD35F" in x for x in lines)
+    # S2(두 번째 줄)는 S1보다 위에 놓인다
+    y = {t: float(x.split("\\pos(")[1].split(",")[1].split(")")[0]) for x in lines if "Bubble" in x
+         for t in ("안녕하세요", "반가워요") if t in x}
+    assert y["반가워요"] < y["안녕하세요"]
+    assert any(x.startswith("Dialogue: 9,") and "[웃음]" in x for x in lines)

@@ -258,3 +258,237 @@ def to_ass(events: Iterable[dict], spk: dict[str, dict], width: int = 1280, heig
         rows.append(f"Dialogue: 0,{_ts_ass(ev['start'])},{_ts_ass(ev['end'])},{style},{_ass_escape(who['name'])},"
                     f"0,0,0,,{text}")
     return "\n".join(head + rows) + "\n"
+
+
+# ───────────────────── 자막 입힌 MP4용 ASS (SPEC-008) ─────────────────────
+# 웹 플레이어와 같은 모양: 고정 줄(lane)에 말풍선, 아래 화자 표시줄(rail)에서 말하는 사람 칩을 색으로 켜고,
+# 말풍선 꼬리와 선으로 그 칩을 가리킨다. 내려받는 ASS(to_ass)는 편집하기 쉽게 그대로 둔다.
+
+_FONT_FILES = ("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+               "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
+
+
+def assign_lanes(events: Iterable[dict]) -> tuple[dict[int, int], int]:
+    """시작 순서대로 비어 있는 가장 아래 줄에 넣는다. 끝날 때까지 줄을 바꾸지 않는다(웹 job.js와 같은 규칙)."""
+    ends: list[float] = []
+    lane: dict[int, int] = {}
+    dialog = sorted((e for e in events if e["speaker"] != SFX_ID), key=lambda e: (e["start"], e.get("id", 0)))
+    for e in dialog:
+        i = next((k for k, t in enumerate(ends) if t <= e["start"] + 1e-6), None)
+        if i is None:
+            i = len(ends)
+            ends.append(0.0)
+        ends[i] = e["end"]
+        lane[e.get("id", id(e))] = i
+    return lane, max(1, len(ends))
+
+
+class _Measure:
+    """글자 폭 재기. 폰트가 없으면 한글 1em·그 밖 0.55em으로 어림한다."""
+
+    def __init__(self) -> None:
+        self.fonts: dict[int, object] = {}
+        self.path = None
+        try:
+            import os
+
+            from PIL import ImageFont  # noqa: F401
+            self.path = next((p for p in _FONT_FILES if os.path.exists(p)), None)
+        except ImportError:
+            self.path = None
+
+    def __call__(self, text: str, size: int) -> float:
+        # libass의 글자 크기는 em이 아니라 (ascent+descent) 높이 기준이라, 같은 비율로 줄여서 잰다.
+        if self.path:
+            try:
+                from PIL import ImageFont
+                if size not in self.fonts:
+                    f = ImageFont.truetype(self.path, 100, index=1)  # ttc 1번 = KR
+                    asc, desc = f.getmetrics()
+                    self.fonts[size] = (ImageFont.truetype(self.path, size, index=1), 100 / (asc + desc))
+                font, k = self.fonts[size]
+                return float(font.getlength(text)) * k
+            except Exception:  # noqa: BLE001
+                self.path = None
+        return sum(size / 1.45 * (1.0 if ord(ch) > 0x2E80 else 0.3 if ch == " " else 0.58) for ch in text)
+
+
+def _rrect(x: float, y: float, w: float, h: float, r: float) -> str:
+    """둥근 사각형 ASS 그리기 명령(왼쪽 위 x,y)."""
+    r = min(r, w / 2, h / 2)
+    k = r * 0.45
+    x2, y2 = x + w, y + h
+
+    def f(v: float) -> str:
+        return f"{v:.1f}"
+
+    return (f"m {f(x + r)} {f(y)} l {f(x2 - r)} {f(y)} b {f(x2 - k)} {f(y)} {f(x2)} {f(y + k)} {f(x2)} {f(y + r)} "
+            f"l {f(x2)} {f(y2 - r)} b {f(x2)} {f(y2 - k)} {f(x2 - k)} {f(y2)} {f(x2 - r)} {f(y2)} "
+            f"l {f(x + r)} {f(y2)} b {f(x + k)} {f(y2)} {f(x)} {f(y2 - k)} {f(x)} {f(y2 - r)} "
+            f"l {f(x)} {f(y + r)} b {f(x)} {f(y + k)} {f(x + k)} {f(y)} {f(x + r)} {f(y)}")
+
+
+def _circle(cx: float, cy: float, r: float) -> str:
+    return _rrect(cx - r, cy - r, 2 * r, 2 * r, r)
+
+
+def _segment(x0: float, y0: float, x1: float, y1: float, width: float) -> str:
+    dx, dy = x1 - x0, y1 - y0
+    n = max((dx * dx + dy * dy) ** 0.5, 1e-6)
+    ox, oy = -dy / n * width / 2, dx / n * width / 2
+    pts = [(x0 + ox, y0 + oy), (x1 + ox, y1 + oy), (x1 - ox, y1 - oy), (x0 - ox, y0 - oy)]
+    return "m " + " l ".join(f"{a:.1f} {b:.1f}" for a, b in pts)
+
+
+def _merge_intervals(iv: list[tuple[float, float]], gap: float = 0.05) -> list[tuple[float, float]]:
+    out: list[list[float]] = []
+    for s, e in sorted(iv):
+        if out and s <= out[-1][1] + gap:
+            out[-1][1] = max(out[-1][1], e)
+        else:
+            out.append([s, e])
+    return [(s, e) for s, e in out]
+
+
+def _fit_lines(text: str, size: int, avail: float, measure) -> list[str]:
+    """글자 폭을 재서 avail 안에 들어가도록 단어 단위로 고르게 나눈다(최대 3줄)."""
+    total = measure(text, size)
+    k = 1
+    while k < 3 and total / k > avail:
+        k += 1
+    if k == 1:
+        return [text]
+    words, lines, cur = text.split(" "), [], ""
+    target = total / k
+    for wd in words:
+        cand = f"{cur} {wd}" if cur else wd
+        if cur and measure(cand, size) > target * 1.08 and len(lines) < k - 1:
+            lines.append(cur)
+            cur = wd
+        else:
+            cur = cand
+    lines.append(cur)
+    return lines
+
+
+def to_ass_burn(events: Iterable[dict], spk: dict[str, dict], order: list[str], width: int = 1280,
+                height: int = 720, font: str = "Noto Sans CJK KR") -> str:
+    """자막 입힌 MP4용 ASS. order: 화자 표시줄 순서(원래 id, 합친 화자는 한 칩)."""
+    events = list(events)
+    w, h = width or 1280, height or 720
+    measure = _Measure()
+    fs = max(16, round(min(w, h) * 0.046))  # 세로 영상에서도 폭에 맞게
+    cfs = max(12, round(fs * 0.72))
+    pad, bw = max(4, round(fs * 0.28)), max(2, round(fs * 0.09))
+    dark = _ass_color("#0A0C10")
+
+    # 화자 표시줄
+    rail: list[str] = []
+    for sid in order:
+        fid = spk.get(sid, {}).get("id", sid)
+        if fid not in rail and fid not in (SFX_ID, "UNK"):
+            rail.append(fid)
+    chip_h = round(cfs * 1.75)
+    rail_bottom = h - round(h * 0.045)
+    rail_top = rail_bottom - chip_h
+    chips: dict[str, dict] = {}
+    n = max(1, len(rail))
+    for i, fid in enumerate(rail):
+        name = spk.get(fid, {}).get("name", fid)
+        dot_r = cfs * 0.32
+        cw = min(measure(name, cfs) + dot_r * 2 + cfs * 1.3, w / n * 0.92)
+        cx = w * (i + 0.5) / n
+        chips[fid] = {"x": cx, "w": cw, "name": name, "color": spk.get(fid, {}).get("color", "#FFFFFF"), "dot_r": dot_r}
+
+    # 줄(lane): 너무 긴 줄이 있으면 모든 줄을 2줄 높이로 고정
+    avail = w * 0.92 - 2 * (pad + bw)
+    def label(e: dict) -> str:
+        who = spk.get(e["speaker"], spk["UNK"])
+        return f"{who['name']}{'?' if e.get('uncertain') else ''}  {e['text']}"
+    dialog = [e for e in events if e["speaker"] != SFX_ID]
+    split = {e.get("id", id(e)): _fit_lines(label(e), fs, avail, measure) for e in dialog}
+    nlines = max([len(v) for v in split.values()] + [1])
+    line_h = fs * 1.02  # libass 한 줄 높이 ≈ 글자 크기
+    lane_h = nlines * line_h + 2 * (pad + bw)
+    gap = fs * 0.8
+    lane, _ = assign_lanes(events)
+
+    head = [
+        "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {w}", f"PlayResY: {h}",
+        "WrapStyle: 2", "ScaledBorderAndShadow: yes", "YCbCr Matrix: TV.709", "",
+        "[V4+ Styles]",
+        ("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, "
+         "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+         "Alignment, MarginL, MarginR, MarginV, Encoding"),
+        f"Style: Bubble,{font},{fs},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,0,0,2,0,0,0,1",
+        f"Style: Shape,{font},{fs},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1",
+        f"Style: Chip,{font},{cfs},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1",
+        (f"Style: SFX,{font},{round(fs * 0.85)},{_ass_color('#DDDDDD')},&H000000FF,&H50000000,&H00000000,"
+         f"0,1,0,0,100,100,0,0,3,{max(2, fs // 6)},0,8,40,40,{round(h * 0.05)},1"),
+        "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+    rows: list[str] = []
+
+    def add(layer: int, s: float, e: float, style: str, text: str) -> None:
+        rows.append(f"Dialogue: {layer},{_ts_ass(s)},{_ts_ass(e)},{style},,0,0,0,,{text}")
+
+    end_all = max([e["end"] for e in events] + [0.1])
+    talk: dict[str, list[tuple[float, float]]] = {fid: [] for fid in chips}
+    for e in dialog:
+        fid = spk.get(e["speaker"], spk["UNK"])["id"]
+        if fid in talk:
+            talk[fid].append((e["start"], e["end"]))
+
+    for fid, c in chips.items():
+        col = _ass_color(c["color"])
+        x0, cy = c["x"] - c["w"] / 2, rail_top + chip_h / 2
+        shape = _rrect(x0, rail_top, c["w"], chip_h, chip_h / 2)
+        dot_x = x0 + cfs * 0.55 + c["dot_r"]
+        name_x = (dot_x + c["dot_r"] + cfs * 0.35 + x0 + c["w"] - cfs * 0.6) / 2
+        nm = _ass_escape(c["name"])
+        # 평소: 어두운 칩 + 흐린 색 테두리
+        add(4, 0, end_all, "Shape", f"{{\\pos(0,0)\\p1\\1c{dark}\\1a&H30&\\3c{col}\\3a&H70&\\bord{bw}}}{shape}")
+        add(5, 0, end_all, "Shape", f"{{\\pos(0,0)\\p1\\1c{col}\\1a&H60&\\bord0}}{_circle(dot_x, cy, c['dot_r'])}")
+        add(5, 0, end_all, "Chip", f"{{\\pos({name_x:.1f},{cy:.1f})\\1c{col}\\1a&H50&\\q2}}{nm}")
+        # 말하는 동안: 색으로 채우고 빛나게
+        for s, e in _merge_intervals(talk.get(fid, [])):
+            add(6, s, e, "Shape", f"{{\\pos(0,0)\\p1\\1c{col}\\1a&H90&\\bord0\\blur{round(cfs * 0.6)}}}"
+                f"{_rrect(x0 - cfs * 0.3, rail_top - cfs * 0.3, c['w'] + cfs * 0.6, chip_h + cfs * 0.6, chip_h)}")
+            add(7, s, e, "Shape", f"{{\\pos(0,0)\\p1\\1c{col}\\bord0}}{shape}")
+            add(8, s, e, "Shape", f"{{\\pos(0,0)\\p1\\1c{dark}\\bord0}}{_circle(dot_x, cy, c['dot_r'])}")
+            add(8, s, e, "Chip", f"{{\\pos({name_x:.1f},{cy:.1f})\\1c{dark}\\q2}}{nm}")
+
+    tail_h, tail_w = fs * 0.5, fs * 0.42
+    for e in dialog:
+        who = spk.get(e["speaker"], spk["UNK"])
+        col = _ass_color(who["color"])
+        k = lane.get(e.get("id", id(e)), 0)
+        box_bottom = rail_top - gap - k * (lane_h + gap)
+        lines = split[e.get("id", id(e))]
+        tw = min(max(measure(x, fs) for x in lines), avail)
+        bub_w = tw + 2 * pad + fs * 0.4
+        cx = w / 2
+        body = r"\N".join(_ass_escape(x) for x in lines)
+        box_h = len(lines) * line_h + 2 * pad
+        # 둥근 말풍선(어두운 바탕 + 화자 색 테두리) 위에 화자 색 글자
+        add(2, e["start"], e["end"], "Shape", f"{{\\pos(0,0)\\p1\\1c{dark}\\1a&H12&\\3c{col}\\bord{bw}}}"
+            f"{_rrect(cx - bub_w / 2, box_bottom - box_h, bub_w, box_h, fs * 0.45)}")
+        add(3, e["start"], e["end"], "Bubble", f"{{\\an2\\pos({cx:.1f},{box_bottom - pad:.1f})\\1c{col}}}{body}")
+        chip = chips.get(who["id"])
+        if not chip:
+            continue
+        r = min(fs * 0.9, bub_w / 2)
+        tx = max(cx - bub_w / 2 + r, min(cx + bub_w / 2 - r, chip["x"]))
+        tip = box_bottom + tail_h
+        add(3, e["start"], e["end"], "Shape", f"{{\\pos(0,0)\\p1\\1c{col}\\bord0}}m {tx - tail_w:.1f} {box_bottom - 1:.1f} "
+            f"l {tx + tail_w:.1f} {box_bottom - 1:.1f} {tx:.1f} {tip:.1f}")
+        if rail_top - tip > 1:
+            add(0, e["start"], e["end"], "Shape", f"{{\\pos(0,0)\\p1\\1c&H000000&\\1a&H60&\\bord0}}"
+                f"{_segment(tx, tip, chip['x'], rail_top, fs * 0.26)}")
+            add(1, e["start"], e["end"], "Shape", f"{{\\pos(0,0)\\p1\\1c{col}\\bord0}}"
+                f"{_segment(tx, tip, chip['x'], rail_top, fs * 0.12)}")
+
+    for e in events:
+        if e["speaker"] == SFX_ID:
+            add(9, e["start"], e["end"], "SFX", _ass_escape(e["text"]))
+    return "\n".join(head + rows) + "\n"
