@@ -1,7 +1,8 @@
 """전체 처리 흐름(워커가 호출).
 
-  준비(ffmpeg) → 음성 인식(CLOVA Speech) → 화자 분리(pyannote) → 단어-화자 배정
-  → 겹친 발화 복원(분리·재인식·매칭) → 자막 이벤트 · 화자 카드 · 자막 파일
+  준비(ffmpeg) → 음성 인식(CLOVA Speech) → 잡음 거르기 → 화자 분리(pyannote) → 단어-화자 배정
+  → 겹친 발화 복원(분리·재인식·매칭) → 화면 속 화자 찾기(얼굴–목소리 연결, 윤곽)
+  → 자막 이벤트(화면 밖 표시) · 화자 카드 · 자막 파일
 """
 from __future__ import annotations
 
@@ -10,11 +11,12 @@ import time
 from pathlib import Path
 
 from .. import config, store, subtitles
-from . import asr, assign, captions, diarize, media, overlap
+from . import asr, assign, captions, diarize, media, noise, overlap, visual
 
 log = logging.getLogger("whosaid.pipeline")
 
-STAGE_RANGE = {"prepare": (0, 8), "asr": (8, 32), "diarize": (32, 60), "overlap": (60, 88), "captions": (88, 99)}
+STAGE_RANGE = {"prepare": (0, 7), "asr": (7, 27), "diarize": (27, 50), "overlap": (50, 74), "visual": (74, 93),
+               "captions": (93, 99)}
 
 
 class UserError(RuntimeError):
@@ -92,6 +94,36 @@ def _thumbnails(d: Path, video: Path, speakers: list[dict], turns: list[dict], o
                 s["thumbs"].append({"file": f"thumbs/{out.name}", "t": round(t, 2)})
 
 
+def _apply_visual(d: Path, V: dict | None, speakers: list[dict], id_map: dict[str, str], events: list[dict],
+                  pinfo: dict) -> int:
+    """화면 분석 결과를 S 번호로 바꿔 visual.json 으로 쓰고, 자막에 '화면 밖'을, 화자 카드에 얼굴을 붙인다.
+    돌려줌: 얼굴과 연결된 화자 수."""
+    for e in events:
+        e["offscreen"] = False
+    if not V:
+        (d / "visual.json").unlink(missing_ok=True)
+        return 0
+    face_of = {id_map[r]: p for r, p in V["speaker_face"].items() if r in id_map}
+    visible = {id_map[r]: iv for r, iv in V["visible"].items() if r in id_map}
+    visual.offscreen_flags(events, visible, set(face_of), V["any_face"])
+    faces = visual.save_faces(d / "preview.mp4", (pinfo.get("width") or 1280, pinfo.get("height") or 720),
+                              {p: V["_face_pick"].get(p) for p in face_of.values()}, d / "faces")
+    for s in speakers:
+        p = face_of.get(s["id"])
+        s["person"] = p
+        s["face"] = faces.get(p) if p else None
+    frames = []
+    for f in V["frames"]:
+        hl = [dict(h, spk=id_map[h["spk"]]) for h in f["hl"] if h["spk"] in id_map]
+        if hl:
+            frames.append({"t": f["t"], "hl": hl})
+    out = {k: v for k, v in V.items() if not k.startswith("_")}
+    out.update({"speaker_face": face_of, "visible": visible, "frames": frames,
+                "scores": [dict(x, speaker=id_map.get(x["speaker"], x["speaker"])) for x in V["scores"]]})
+    store.write_json(d / "visual.json", out)
+    return len(face_of)
+
+
 def process(job_id: str) -> None:
     d = store.job_dir(job_id)
     opts = store.get_options(job_id)
@@ -129,7 +161,7 @@ def process(job_id: str) -> None:
         A = asr.recognize(wav_path, engine=engine, diarization=not use_pyannote,
                           speaker_min=n_spk, speaker_max=n_spk, want_sed=bool(opts.get("sound_events", True)))
         engine = A["engine"]
-        words = A["words"]
+        words, n_noise_words = noise.filter_words(A["words"], engine)
         warnings += A["warnings"]
         store.write_json(d / "asr.json", {k: A[k] for k in ("engine", "words", "sound_events", "warnings")})
         if A.get("raw") is not None:
@@ -167,6 +199,11 @@ def process(job_id: str) -> None:
                 excl = list(turns)
                 diar_model = "none"
                 warnings.append("화자 분리 모델을 쓸 수 없어 모든 말을 한 화자로 표시합니다.")
+        noisy = noise.noise_speakers(turns, words)
+        if noisy:
+            log.info("잡음 화자 제거: %s", sorted(noisy))
+            turns = [x for x in turns if x["speaker"] not in noisy]
+            excl = [x for x in excl if x["speaker"] not in noisy]
         overlaps = diarize.overlap_regions(turns) if use_pyannote else []
         store.write_json(d / "diarization.json",
                          {"model": diar_model, "turns": turns, "exclusive": excl, "overlaps": overlaps})
@@ -201,7 +238,25 @@ def process(job_id: str) -> None:
                                               "n_recovered_words": len(recovered), "regions": details})
         timings["overlap"] = round(time.time() - t, 1)
 
-        # ── 5. 자막 ──────────────────────────────────────────
+        # ── 5. 화면 속 화자 찾기 (SPEC-009) ───────────────────
+        t = time.time()
+        V = None
+        if info["has_video"] and opts.get("visual", True) and turns:
+            if visual.models_ready(config.VISION_DIR):
+                P("visual", 0.0, "화면 속 얼굴을 찾고 있어요", force=True)
+                try:
+                    V = visual.analyze(d / "preview.mp4", (pinfo.get("width") or 1280, pinfo.get("height") or 720),
+                                       turns, excl, d / "faces", config.VISION_DIR,
+                                       progress=lambda f, m="": P("visual", f, m or "화면 속 사람을 찾고 있어요"),
+                                       threads=max(1, config.CPU_THREADS // 2))
+                except Exception as e:  # noqa: BLE001
+                    log.exception("화면 분석 실패")
+                    warnings.append(f"화면 속 화자 찾기에 실패해 윤곽 강조 없이 자막만 만들었습니다: {str(e)[:120]}")
+            else:
+                warnings.append("화면 분석 모델이 설치되지 않아 말하는 사람 윤곽 강조를 건너뛰었습니다.")
+        timings["visual"] = round(time.time() - t, 1)
+
+        # ── 6. 자막 ──────────────────────────────────────────
         t = time.time()
         P("captions", 0.1, "자막과 화자 카드를 만들고 있어요", force=True)
         events = captions.build_events(words + recovered)
@@ -214,6 +269,7 @@ def process(job_id: str) -> None:
         captions.mark_overlaps(events)
         for i, e in enumerate(events):
             e["id"] = i
+        onscreen = _apply_visual(d, V, speakers, id_map, events, pinfo)
         if info["has_video"]:
             P("captions", 0.4, "화자별 장면을 고르고 있어요", force=True)
             _thumbnails(d, d / "preview.mp4", speakers, turns, overlaps, id_map)
@@ -230,6 +286,10 @@ def process(job_id: str) -> None:
             "recovered_lines": sum(1 for e in events if e.get("recovered")),
             "reassigned_words": sum(1 for w in words if w.get("reassigned")),
             "sound_lines": sum(1 for e in events if e["speaker"] == captions.SFX_ID),
+            "noise_words": n_noise_words,
+            "noise_speakers": len(noisy),
+            "onscreen_speakers": onscreen,
+            "offscreen_lines": sum(1 for e in events if e.get("offscreen")),
         }
         result = {
             "job_id": job_id,

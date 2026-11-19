@@ -47,5 +47,9 @@ def clova_available() -> bool:
     return bool(CLOVA_SPEECH_INVOKE_URL and CLOVA_SPEECH_SECRET)
 
 
+# 화면 속 화자 찾기 모델(SPEC-009): MODEL_DIR/vision/ 에 YuNet·SFace·YOLO11n-seg ONNX
+VISION_DIR = MODEL_DIR / "vision"
+
+
 def pyannote_available() -> bool:
     return bool(HF_TOKEN)
