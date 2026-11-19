@@ -24,16 +24,20 @@
 | | 기능 | 설명 |
 | --- | --- | --- |
 | 🎨 | 화자 색 자막 | 화자마다 색과 이름표. 색 없이도 이름표로 구분 |
-| 💬 | 고정 줄 말풍선 | 동시에 말해도 자막이 제자리를 지키고, 화면 아래 표시줄에서 말하는 사람 칩이 화자 색으로 켜지며 말풍선 꼬리가 그 사람을 가리킴 |
+| 🔦 | 말하는 사람 강조 | 얼굴과 목소리를 영상 안에서 자동으로 이어, 지금 말하는 사람의 몸 윤곽을 화자 색으로 그림. 자막 테두리도 같은 색 |
+| 📢 | 화면 밖 화자 | 화면에 안 보이는 사람(내레이션·제작진)의 말에는 자막에 '화면 밖' 표시 |
+| 💬 | 위쪽 고정 줄 말풍선 | 자막은 영상 위쪽 정해진 줄에 뜨고, 동시에 말해도 제자리를 지킴 |
+| 🧹 | 잡음 거르기 | 신뢰도 낮은 짧은 인식, 지어낸 문장, 잠깐 잡힌 가짜 화자를 자막에서 뺌 |
 | 🔀 | 겹친 말 복원 | 겹친 구간을 SepFormer로 나눠 다시 받아 적고, 묻힌 사람의 말을 '복원' 자막으로 추가 |
 | 🧑‍🤝‍🧑 | 화자 카드 | 혼자 말하는 장면 3장과 대표 대사를 보고 이름 붙이기·합치기 |
 | 📜 | 대본 | 시간순 대본, '동시'·'복원' 표시, 눌러서 그 장면으로 |
-| 🔠 | 보기 설정 | 글자 크기 3단계, 위·아래, 이름표·말하는 사람 표시·소리 자막 켜고 끄기, 전체 화면 |
+| 🔠 | 보기 설정 | 글자 크기 3단계, 이름표·말하는 사람 강조·소리 자막 켜고 끄기, 전체 화면 |
 | 📦 | 내보내기 | SRT · WebVTT(화자 색) · ASS(화자 스타일) · JSON · 자막 입힌 MP4 |
 
 <p align="center">
-  <img src="docs/screens/burned_frame_31s.jpg" alt="자막 입힌 영상: 동시에 말한 두 사람의 말풍선이 각자 줄에 화자 색으로 뜨고, 아래 표시줄에서 두 사람의 칩이 켜져 꼬리로 연결됨" width="720">
-  <br><sub>테스트 영상 31.9초 — 일반 자막에서는 사라지던 맞장구가 복원되어 두 줄이 함께 뜬다</sub>
+  <img src="docs/screens/active_speaker.jpg" alt="자막 입힌 영상 두 장면: 왼쪽은 함께 걷는 두 사람 중 말하는 사람만 파란 윤곽과 파란 테두리 자막, 오른쪽은 말하는 출연자에게 노란 윤곽과 노란 테두리 자막" width="860">
+  <br><sub>둘이 함께 걸어도 말하는 사람에게만 윤곽이 생기고, 자막 테두리도 같은 색이다.<br>
+  영상: <a href="https://commons.wikimedia.org/wiki/File:Interview_with_Judy_Ling_Wong_and_Sam_Bridgewater_to_find_out_how_using_clever_science_to_create_mixed_landscapes_and_working_with_nature_can_help_solve_our_finite_land_conundrum_%E2%80%93_The_Royal_Society.webm">The Royal Society 인터뷰</a> (CC BY 3.0) 일부에 VoxPrism 처리 결과를 입힘</sub>
 </p>
 
 ## 📈 결과
@@ -59,7 +63,10 @@ flowchart LR
     D --> W
     D -->|겹침 구간| O[겹친 말 복원<br/>SepFormer 분리 → 화자 재식별<br/>→ 배치 재인식 → 단어 판정]
     W --> O
-    O --> C[자막·화자 카드<br/>SRT · VTT · ASS · MP4]
+    P -->|얼굴·입 움직임| F[화면 속 화자 찾기<br/>YuNet · SFace · YOLO11-seg<br/>→ 얼굴–목소리 연결]
+    D --> F
+    O --> C[자막·화자 카드<br/>위쪽 고정 · 화면 밖 표시<br/>SRT · VTT · ASS · MP4]
+    F -->|말하는 사람 윤곽| C
 ```
 
 한국어 받아쓰기는 국내 클라우드의 국내 모델(네이버 클라우드 CLOVA Speech)이, 화자 분리·음원 분리는 서버 안의 오픈 모델이 맡습니다. 자세한 설계는 [상세설계](docs/02-상세설계.md).
@@ -75,7 +82,7 @@ cd app && python -m pytest -q tests                      # 모델 없이 도는 
 WHOSAID_DATA_DIR=/tmp/voxprism python -m uvicorn whosaid.web.main:app --reload
 ```
 
-모델까지 돌리려면 `app/requirements.txt`(torch CPU, pyannote, SpeechBrain, faster-whisper)와 CLOVA Speech·Hugging Face 키가 필요합니다. 네이버 클라우드 서버 만들기·배포는 [SPEC-006](specs/006-ncp-deploy/spec.md)과 [인수인계](docs/06-인수인계.md)에 있습니다.
+모델까지 돌리려면 `app/requirements.txt`(torch CPU, pyannote, SpeechBrain, faster-whisper, OpenCV, ONNX Runtime), 화면 분석 모델(`app/deploy/fetch_models.sh`)과 CLOVA Speech·Hugging Face 키가 필요합니다. 네이버 클라우드 서버 만들기·배포는 [SPEC-006](specs/006-ncp-deploy/spec.md)과 [인수인계](docs/06-인수인계.md)에 있습니다.
 
 ## 📚 문서
 
@@ -88,7 +95,7 @@ WHOSAID_DATA_DIR=/tmp/voxprism python -m uvicorn whosaid.web.main:app --reload
 | [디자인](docs/04-디자인.md) | 브랜드, 화자 색·대비, 자막 디자인, 접근성 |
 | [SDD 개발 프로세스](docs/05-SDD-개발-프로세스.md) | 스펙 → 설계 → 작업 → 구현, 품질 게이트 |
 | [인수인계](docs/06-인수인계.md) | 지금 상태, 서버 운영, 다음 할 일 |
-| [specs/](specs/README.md) | 기능별 스펙 8개 |
+| [specs/](specs/README.md) | 기능별 스펙 9개 |
 
 ## 🗂️ 구조
 
