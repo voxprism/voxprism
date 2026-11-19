@@ -8,3 +8,6 @@ soundfile>=0.12
 pyannote.audio==4.1.0
 speechbrain==1.1.2
 faster-whisper==1.2.1
+# 화면 속 화자 찾기(SPEC-009): 얼굴(YuNet·SFace)은 OpenCV, 사람 분할(YOLO11n-seg)은 ONNX Runtime
+opencv-python-headless>=4.10
+onnxruntime>=1.18
