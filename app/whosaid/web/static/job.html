@@ -40,22 +40,19 @@
       <div>
         <div class="player" id="player">
           <video id="video" controls playsinline preload="metadata"></video>
-          <div class="capbox top" id="cap-top" aria-hidden="true"></div>
+          <canvas class="hl" id="hl" aria-hidden="true"></canvas>
           <div class="capstage" id="capstage">
-            <svg class="links" id="links" aria-hidden="true"></svg>
-            <div class="lanes" id="cap-bottom" aria-live="off"></div>
-            <div class="rail" id="rail" aria-hidden="true"></div>
+            <div class="lanes" id="cap-lanes" aria-live="off"></div>
           </div>
+          <div class="capbox sfxbox" id="cap-sfx" aria-hidden="true"></div>
         </div>
         <div class="pctrl" role="toolbar" aria-label="자막 설정">
           <span class="muted">글자</span>
           <div class="seg" id="seg-size">
             <button data-v="1" class="on">보통</button><button data-v="1.25">크게</button><button data-v="1.55">아주 크게</button>
           </div>
-          <span class="muted">위치</span>
-          <div class="seg" id="seg-pos"><button data-v="bottom" class="on">아래</button><button data-v="top">위</button></div>
           <label class="check" style="margin:0"><input type="checkbox" id="opt-tag" checked><span>이름표</span></label>
-          <label class="check" style="margin:0"><input type="checkbox" id="opt-rail" checked><span>말하는 사람 표시</span></label>
+          <label class="check" style="margin:0"><input type="checkbox" id="opt-hl" checked><span>말하는 사람 강조</span></label>
           <label class="check" style="margin:0"><input type="checkbox" id="opt-sfx" checked><span>소리 자막</span></label>
           <button class="btn small" id="fs" type="button">전체 화면</button>
         </div>

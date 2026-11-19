@@ -1,10 +1,11 @@
 (() => {
   const jobId = location.pathname.split("/").filter(Boolean).pop();
-  const STAGES = [["prepare", "준비"], ["asr", "음성 인식"], ["diarize", "화자 구분"], ["overlap", "겹친 말 복원"], ["captions", "자막 생성"]];
-  const video = $("#video"), capTop = $("#cap-top"), capBottom = $("#cap-bottom"), rail = $("#rail"), links = $("#links");
+  const STAGES = [["prepare", "준비"], ["asr", "음성 인식"], ["diarize", "화자 구분"], ["overlap", "겹친 말 복원"],
+    ["visual", "화면 속 화자"], ["captions", "자막 생성"]];
+  const video = $("#video"), capSfx = $("#cap-sfx"), capLanes = $("#cap-lanes"), canvas = $("#hl");
   let job = null, events = [], disp = {}, speakers = [], pollTimer = null, renderTimer = null;
-  let scale = 1, showTags = true, showSfx = true, showRail = true, lastKey = "", lastActiveIds = "";
-  let laneOf = {}, laneEls = [];
+  let scale = 1, showTags = true, showSfx = true, showHl = true, lastKey = "", lastActiveIds = "";
+  let laneOf = {}, laneEls = [], vis = null, lastHl = "";
 
   const who = (sid) => disp[sid] || { id: sid, name: "?", color: "#fff" };
 
@@ -54,12 +55,15 @@
     $("#subtitle").textContent = `${fmtDur(s.duration)} · 화자 ${s.speakers}명 · 인식: ${r.engine === "clova" ? "CLOVA Speech" : "Whisper"} · 화자 분리: ${r.diarization_model || "-"}`;
     if (!video.src) {
       video.src = `/media/${jobId}/preview.mp4`;
+      loadVisual();
     }
     const warns = (job.status && job.status.warnings) || [];
     $("#warns").innerHTML = warns.map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("");
     $("#stats").innerHTML = [
       [s.speakers, "화자"], [s.lines, "자막 줄"], [s.overlap_regions, "겹친 말 구간"],
       [s.overlap_lines, "동시 표시 줄"], [s.recovered_lines, "복원한 줄"], [s.sound_lines, "소리 자막"],
+      [s.onscreen_speakers ?? "-", "얼굴과 연결된 화자"], [s.offscreen_lines ?? "-", "화면 밖 자막 줄"],
+      [s.noise_words ?? "-", "걸러 낸 잡음 단어"],
       [t.total ? `${Math.round(t.total)}초` : "-", "처리 시간"],
     ].map(([n, k]) => `<div class="stat"><div class="n">${esc(n ?? 0)}</div><div class="k">${k}</div></div>`).join("");
     for (const k of ["srt", "vtt", "ass", "json"]) $(`#dl-${k}`).href = `/api/jobs/${jobId}/download/${k}`;
@@ -87,6 +91,8 @@
           <input type="text" maxlength="30" value="${esc(sp.display && sp.display.id === sp.id ? sp.display.name : sp.name)}" aria-label="${esc(sp.id)} 이름">
         </div>
         <div class="meta">말한 시간 ${fmtDur(sp.talk_time)} · 자막 ${sp.lines}줄${sp.recovered_lines ? ` · 복원 ${sp.recovered_lines}줄` : ""}</div>
+        ${sp.face ? `<div class="facebox"><img src="/media/${jobId}/${esc(sp.face)}" alt="${esc(sp.id)} 얼굴"><span>화면 속 얼굴과 연결됨 — 말할 때 이 사람에게 윤곽이 생겨요</span></div>`
+          : (vis && vis.any_face ? `<div class="facebox off"><span>얼굴과 연결되지 않은 목소리 — 자막에 '화면 밖'으로 표시돼요</span></div>` : "")}
         <div class="thumbs">${(sp.thumbs || []).map((th) =>
           `<img src="/media/${jobId}/${esc(th.file)}" data-t="${th.t}" alt="${esc(sp.id)} ${fmtTime(th.t)} 장면" loading="lazy">`).join("")}</div>
         ${(sp.samples || []).map((x) => `<div class="sample">“${esc(x)}”</div>`).join("")}
@@ -113,8 +119,8 @@
     $$("#script .line").forEach((el) => el.addEventListener("click", () => { video.currentTime = +el.dataset.t + 0.01; video.play(); }));
   }
 
-  // ───── 자막 오버레이 (SPEC-008: 고정 줄 말풍선 + 말하는 사람 표시줄) ─────
-  // 줄 배정: 시작 순서대로 비어 있는 가장 아래 줄에 넣고, 끝날 때까지 그 줄에서 움직이지 않는다.
+  // ───── 자막 오버레이 (SPEC-008 줄 고정 + SPEC-009 위쪽 고정·화면 밖·윤곽 강조) ─────
+  // 줄 배정: 시작 순서대로 비어 있는 가장 위 줄에 넣고, 끝날 때까지 그 줄에서 움직이지 않는다.
   // 같은 규칙을 MP4용 captions.assign_lanes 가 쓴다.
   function assignLanes(evs) {
     const ends = [], lane = {};
@@ -128,63 +134,70 @@
     return { lane, n: Math.max(1, ends.length) };
   }
 
-  function railIds() {
-    const seen = new Set();
-    return speakers.map((sp) => who(sp.id).id).filter((id) => !seen.has(id) && seen.add(id));
-  }
-
   function renderStage() {
     const { lane, n } = assignLanes(events);
     laneOf = lane;
-    capBottom.innerHTML = Array.from({ length: n }, (_, i) => `<div class="lane" data-lane="${i}"></div>`).join("");
-    laneEls = $$(".lane", capBottom);
-    rail.innerHTML = railIds().map((id) => {
-      const d = who(id);
-      return `<span class="chip" data-id="${esc(id)}" style="--c:${esc(d.color)}"><span class="dot"></span><span class="nm">${esc(d.name)}</span></span>`;
-    }).join("");
-    lastKey = "";
+    capLanes.innerHTML = Array.from({ length: n }, (_, i) => `<div class="lane" data-lane="${i}"></div>`).join("");
+    laneEls = $$(".lane", capLanes);
+    lastKey = ""; lastHl = "";
   }
 
   function capHTML(e) {
     const d = who(e.speaker);
     if (e.speaker === "_sfx") return `<div class="cap sfx"><span class="txt">${esc(e.text)}</span></div>`;
-    const chip = rail.querySelector(`.chip[data-id="${CSS.escape(d.id)}"]`);
-    return `<div class="cap ${e.overlap ? "ov" : ""} ${e.uncertain ? "uncertain" : ""} ${chip ? "" : "nochip"}" data-spk="${esc(d.id)}" style="--c:${esc(d.color)}">
-      <span class="tag">${esc(d.name)}</span><span class="txt">${esc(e.text)}</span></div>`;
+    const off = e.offscreen ? '<span class="off" title="화면에 보이지 않는 사람이 말하고 있어요">화면 밖</span>' : "";
+    return `<div class="cap ${e.overlap ? "ov" : ""} ${e.uncertain ? "uncertain" : ""} ${e.offscreen ? "offscreen" : ""}" style="--c:${esc(d.color)}">
+      <span class="tag">${esc(d.name)}</span>${off}<span class="txt">${esc(e.text)}</span></div>`;
   }
 
-  // 말풍선 꼬리를 그 사람 칩 쪽으로 옮기고, 칩까지 같은 색 선으로 잇는다.
-  function fitStage() {
-    const player = $("#player"), stage = $("#capstage");
-    player.classList.remove("compact");
-    const pr = player.getBoundingClientRect(), sr = stage.getBoundingClientRect();
-    if (sr.top < pr.top + 4 || sr.bottom > pr.bottom - 4) player.classList.add("compact");
+  // 말하는 사람 윤곽(visual.json: 0.2초마다 강조할 사람의 윤곽 다각형, 0~1 좌표)
+  async function loadVisual() {
+    try {
+      const r = await fetch(`/media/${jobId}/visual.json`, { cache: "no-cache" });
+      vis = r.ok ? await r.json() : null;
+    } catch { vis = null; }
+    lastHl = "";
+    renderSpeakers();
   }
 
-  function layoutLinks() {
-    fitStage();
-    const stage = $("#capstage"), sr = stage.getBoundingClientRect();
-    const flip = $("#player").classList.contains("flip");
-    let paths = "";
-    for (const cap of $$(".cap[data-spk]", capBottom)) {
-      const chip = rail.querySelector(`.chip[data-id="${CSS.escape(cap.dataset.spk)}"]`);
-      if (!chip) continue;
-      const cr = cap.getBoundingClientRect(), hr = chip.getBoundingClientRect();
-      const em = parseFloat(getComputedStyle(cap).fontSize) || 16;
-      const cx = hr.left + hr.width / 2;
-      const r = Math.min(em * 0.9, cr.width / 2);
-      const tx = Math.max(r, Math.min(cr.width - r, cx - cr.left));
-      cap.style.setProperty("--tx", `${tx}px`);
-      const x0 = cr.left + tx - sr.left, x1 = cx - sr.left;
-      const y0 = (flip ? cr.top - em * 0.5 : cr.bottom + em * 0.5) - sr.top;
-      const y1 = (flip ? hr.bottom : hr.top) - sr.top;
-      if (Math.abs(y1 - y0) > 1) {
-        const d = `M${x0.toFixed(1)} ${y0.toFixed(1)} L${x1.toFixed(1)} ${y1.toFixed(1)}`;
-        paths += `<path d="${d}" stroke="rgba(0,0,0,.65)" stroke-width="${(em * 0.26).toFixed(1)}" stroke-linecap="round"/>`
-          + `<path d="${d}" stroke="${esc(cap.style.getPropertyValue("--c"))}" stroke-width="${(em * 0.12).toFixed(1)}" stroke-linecap="round"/>`;
-      }
+  function nearestFrame(t) {
+    const fs = vis && vis.frames;
+    if (!fs || !fs.length) return null;
+    let lo = 0, hi = fs.length - 1;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (fs[m].t < t) lo = m + 1; else hi = m; }
+    let best = fs[lo];
+    if (lo > 0 && Math.abs(fs[lo - 1].t - t) < Math.abs(best.t - t)) best = fs[lo - 1];
+    return Math.abs(best.t - t) <= 0.6 / (vis.fps || 5) + 0.02 ? best : null;
+  }
+
+  function drawHighlights(t) {
+    const fr = showHl ? nearestFrame(t) : null;
+    const W = video.clientWidth, H = video.clientHeight;
+    const key = `${fr ? fr.t : "-"}|${W}x${H}|${showHl}`;
+    if (key === lastHl) return;
+    lastHl = key;
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) {
+      canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+      canvas.style.width = `${W}px`; canvas.style.height = `${H}px`;
     }
-    links.innerHTML = paths;
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    if (!fr || !video.videoWidth) return;
+    // 영상이 플레이어 안에 들어간 실제 영역(위아래·좌우 검은 띠 제외)
+    const s = Math.min(W / video.videoWidth, H / video.videoHeight);
+    const cw = video.videoWidth * s, ch = video.videoHeight * s, ox = (W - cw) / 2, oy = (H - ch) / 2;
+    const lw = Math.max(2.5, cw * 0.005);
+    for (const h of fr.hl) {
+      const c = who(h.spk).color;
+      ctx.beginPath();
+      h.poly.forEach(([x, y], i) => (i ? ctx.lineTo : ctx.moveTo).call(ctx, ox + x * cw, oy + y * ch));
+      ctx.closePath();
+      ctx.globalAlpha = 0.16; ctx.fillStyle = c; ctx.fill();
+      ctx.globalAlpha = 1; ctx.lineJoin = "round"; ctx.strokeStyle = c; ctx.lineWidth = lw;
+      ctx.shadowColor = c; ctx.shadowBlur = lw * 4; ctx.stroke(); ctx.shadowBlur = 0;
+    }
   }
 
   function tick() {
@@ -204,12 +217,10 @@
         const el = laneEls[laneOf[e.id] ?? 0] || laneEls[0];
         if (el) el.insertAdjacentHTML("beforeend", capHTML(e));
       }
-      capTop.innerHTML = sfx.map(capHTML).join("");
-      const talking = new Set(dialog.map((e) => who(e.speaker).id));
-      $$(".chip", rail).forEach((c) => c.classList.toggle("on", talking.has(c.dataset.id)));
-      layoutLinks();
-      // 화면 읽기 프로그램용: 새로 나타난 자막만 읽도록
-      capBottom.setAttribute("aria-label", dialog.map((e) => `${who(e.speaker).name}: ${e.text}`).join(" / "));
+      capSfx.innerHTML = sfx.map(capHTML).join("");
+      fitStage();
+      // 화면 읽기 프로그램용
+      capLanes.setAttribute("aria-label", dialog.map((e) => `${who(e.speaker).name}${e.offscreen ? "(화면 밖)" : ""}: ${e.text}`).join(" / "));
     }
     const ids = dialog.map((e) => e.id).join(",");
     if (ids !== lastActiveIds) {
@@ -223,14 +234,23 @@
         }
       });
     }
+    drawHighlights(t);
     requestAnimationFrame(tick);
+  }
+
+  function fitStage() {
+    const player = $("#player"), stage = $("#capstage");
+    player.classList.remove("compact");
+    const pr = player.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+    if (sr.bottom > pr.bottom - Math.max(54, pr.height * 0.12)) player.classList.add("compact");
   }
 
   function resizeCaps() {
     const w = $("#player").clientWidth || 640;
     const px = Math.max(15, Math.min(64, w * 0.03 * scale));
-    $("#capstage").style.fontSize = capTop.style.fontSize = `${px}px`;
-    layoutLinks();
+    $("#capstage").style.fontSize = capSfx.style.fontSize = `${px}px`;
+    fitStage();
+    lastHl = "";
   }
   new ResizeObserver(resizeCaps).observe($("#player"));
   document.addEventListener("fullscreenchange", resizeCaps);
@@ -242,9 +262,8 @@
     }));
   }
   segment("seg-size", (v) => { scale = +v; resizeCaps(); });
-  segment("seg-pos", (v) => { $("#player").classList.toggle("flip", v === "top"); layoutLinks(); });
   $("#opt-tag").addEventListener("change", (e) => { showTags = e.target.checked; $("#player").classList.toggle("notags", !showTags); lastKey = ""; });
-  $("#opt-rail").addEventListener("change", (e) => { showRail = e.target.checked; $("#player").classList.toggle("norail", !showRail); lastKey = ""; });
+  $("#opt-hl").addEventListener("change", (e) => { showHl = e.target.checked; lastHl = ""; });
   $("#opt-sfx").addEventListener("change", (e) => { showSfx = e.target.checked; lastKey = ""; });
   $("#fs").addEventListener("click", () => {
     const p = $("#player");
