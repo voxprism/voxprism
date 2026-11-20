@@ -1,7 +1,7 @@
 ---
 id: SPEC-009
 title: 화면 속 말하는 사람 강조와 화면 밖 화자 표시
-status: 승인
+status: 구현됨
 owner: "@Movinggun-bit"
 requirements: [FR-VIS-01, FR-VIS-02, FR-VIS-03, FR-VIS-04, FR-VIS-05, FR-VIS-06, FR-VIS-07, FR-VIS-08, FR-CAP-08, FR-VIEW-08, FR-VIEW-09, FR-VIEW-10, NFR-PERF-03, NFR-PRIV-02]
 updated: 2026-11-20
@@ -106,4 +106,4 @@ updated: 2026-11-20
 | --- | --- |
 | 2026-11-19 | 사용자 요구로 작성·승인. 개발 샘플(왕립학회 인터뷰, CC BY)로 연결·강조 확인 |
 | 2026-11-19 | 구현·서버 배포, 평가셋 회귀 없음 확인 |
-| 2026-11-20 | 사용자 요구로 FR-VIS-07(몸 추적), FR-VIS-08(색은 목소리 기준) 추가 |
+| 2026-11-20 | 사용자 요구로 FR-VIS-07(몸 추적), FR-VIS-08(색은 목소리 기준) 추가 — 구현·배포 |
