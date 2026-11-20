@@ -30,6 +30,9 @@ MIN_FACE = 28            # 이보다 작은 얼굴(픽셀)은 입 움직임을 �
 TRACK_GAP = 0.35         # 이보다 오래 안 보이면 트랙을 끊음(초)
 SAME_PERSON = 0.42       # SFace 코사인 유사도: 이 이상이면 같은 사람
 MIN_SUPPORT = 1.5        # 연결 근거: 화면에 보이며 그 화자가 말한 시간(초) 최소
+BODY_IOU = 0.35          # 몸 추적: 이웃 프레임 사람 상자 IoU 최소
+BODY_GAP = 0.45          # 몸 추적: 이보다 오래 끊기면 다른 트랙(초)
+BODY_VOTES = 2           # 몸 트랙을 그 사람으로 볼 얼굴 확인 횟수 최소
 MODEL_FILES = {
     "face": "face_detection_yunet_2023mar.onnx",
     "sface": "face_recognition_sface_2021dec.onnx",
@@ -382,10 +385,15 @@ def face_outline(box, W: int, H: int) -> list[list[float]]:
 
 def pick_person(face_box, persons: list[tuple[np.ndarray, np.ndarray]]):
     """얼굴 가운데를 품고, 얼굴이 몸 위쪽에 있는 사람 마스크."""
+    k = pick_person_index(face_box, persons)
+    return persons[k] if k is not None else None
+
+
+def pick_person_index(face_box, persons) -> int | None:
     fx, fy, fw, fh = face_box
     cx, cy = int(fx + fw / 2), int(fy + fh / 2)
     best, bv = None, 0.0
-    for b, m in persons:
+    for k, (b, m) in enumerate(persons):
         if not (b[0] <= cx <= b[2] and b[1] <= cy <= b[3]):
             continue
         if cy < m.shape[0] and cx < m.shape[1] and not m[cy, cx]:
@@ -396,8 +404,58 @@ def pick_person(face_box, persons: list[tuple[np.ndarray, np.ndarray]]):
         top_bias = 1.0 - min(1.0, (cy - b[1]) / max(1.0, b[3] - b[1]))
         v *= 0.5 + 0.5 * top_bias
         if v > bv:
-            best, bv = (b, m), v
+            best, bv = k, v
     return best
+
+
+def label_bodies(frames: list[tuple[float, list, dict]], cuts: set[float] | None = None,
+                 min_iou: float = BODY_IOU, gap: float = BODY_GAP, min_votes: int = BODY_VOTES) -> list[dict[int, str]]:
+    """몸 추적으로 '얼굴이 안 보이는 순간'에도 사람을 알아본다 (SPEC-009 FR-VIS-07).
+
+    frames[i] = (t, 사람 상자 목록[xyxy], {사람 P: 그 프레임에서 P 얼굴이 속한 상자 번호}).
+    이웃 프레임 상자를 IoU로 이어 몸 트랙을 만들고(장면 전환·공백에서 끊음), 트랙 안에서 얼굴로 확인된 사람을
+    투표해 min_votes 이상이고 60% 이상이면 트랙 전체를 그 사람으로 본다.
+    돌려줌: 프레임마다 {상자 번호: 사람}.
+    """
+    cuts = sorted(cuts or [])
+    track_of: list[list[int]] = []
+    n_tracks = 0
+    prev_t, prev_boxes, prev_ids = None, [], []
+    for t, boxes, _ in frames:
+        ids = [-1] * len(boxes)
+        cut = prev_t is not None and any(prev_t < c <= t for c in cuts)
+        if prev_t is not None and not cut and t - prev_t <= gap + 1e-6:
+            pairs = sorted(((_iou_xyxy(pb, b), i, j) for i, pb in enumerate(prev_boxes) for j, b in enumerate(boxes)),
+                           reverse=True)
+            used_i, used_j = set(), set()
+            for v, i, j in pairs:
+                if v < min_iou or i in used_i or j in used_j:
+                    continue
+                ids[j] = prev_ids[i]
+                used_i.add(i)
+                used_j.add(j)
+        for j in range(len(ids)):
+            if ids[j] < 0:
+                ids[j] = n_tracks
+                n_tracks += 1
+        track_of.append(ids)
+        prev_t, prev_boxes, prev_ids = t, boxes, ids
+    votes: dict[int, dict[str, int]] = {}
+    for (t, boxes, links), ids in zip(frames, track_of):
+        for person, k in links.items():
+            if k is not None and 0 <= k < len(ids):
+                v = votes.setdefault(ids[k], {})
+                v[person] = v.get(person, 0) + 1
+    label: dict[int, str] = {}
+    for tid, v in votes.items():
+        person, c = max(v.items(), key=lambda kv: kv[1])
+        if c >= min_votes and c / sum(v.values()) >= 0.6:
+            label[tid] = person
+    return [{j: label[tid] for j, tid in enumerate(ids) if tid in label} for ids in track_of]
+
+
+def _iou_xyxy(a, b) -> float:
+    return iou((a[0], a[1], a[2] - a[0], a[3] - a[1]), (b[0], b[1], b[2] - b[0], b[3] - b[1]))
 
 
 # ───────────────────────────── 전체 실행 ─────────────────────────────
@@ -472,7 +530,8 @@ def analyze(video: Path, size: tuple[int, int], turns: list[dict], exclusive: li
         ts = sorted(d.t for tr in named if tr.person == p for d in tr.dets)
         visible[s] = intervals(ts, 1 / FACE_FPS)
 
-    # 6) 강조 윤곽: 연결된 사람이 보이고 그 목소리가 나오는 SEG_FPS 프레임
+    # 6) 강조 윤곽: 누군가 말하는 SEG_FPS 프레임마다 사람 분할 → 얼굴로 확인된 사람의 몸을 추적해서
+    #    얼굴이 안 보이는 순간(뒤돌기·옆모습·가림)에도 같은 사람의 몸에 윤곽을 그린다 (FR-VIS-07)
     seg = PersonSeg(model_dir / MODEL_FILES["seg"], threads=threads)
     by_time: dict[float, list[Det]] = {}
     for tr in named:
@@ -480,29 +539,60 @@ def analyze(video: Path, size: tuple[int, int], turns: list[dict], exclusive: li
             for d in tr.dets:
                 by_time.setdefault(round(d.t, 2), []).append(d)
     det_person = {id(d): tr.person for tr in named for d in tr.dets}
-    out_frames = []
-    for t, img in read_frames(video, SEG_FPS, (W, H)):
-        talking = _speaking(turns, t)
-        if not talking:
-            continue
-        want = []
-        for d in by_time.get(round(t, 2), []):
-            s = face_of.get(det_person.get(id(d)))
-            if s in talking:
-                want.append((s, d))
-        if not want:
+    seg_frames: list[tuple[float, list, dict]] = []
+    polys: list[list] = []
+    faces_seen: list[dict[str, Det]] = []
+    for t, img in read_frames(video, SEG_FPS, (W, H)) if face_of else []:
+        if duration:
+            prog(0.6 + 0.36 * min(1.0, t / duration), "말하는 사람의 윤곽을 그리고 있어요")
+        if not _speaking(turns, t):
             continue
         persons = seg(img)
+        links: dict[str, int | None] = {}
+        seen: dict[str, Det] = {}
+        for d in by_time.get(round(t, 2), []):
+            p = det_person.get(id(d))
+            links[p] = pick_person_index(d.box, persons)
+            seen[p] = d
+        seg_frames.append((round(t, 2), [b for b, _ in persons], links))
+        polys.append([outline(m, W, H) for _, m in persons])
+        faces_seen.append(seen)
+    body_label = label_bodies(seg_frames, cuts)
+    out_frames = []
+    body_times: dict[str, list[float]] = {}
+    for (t, boxes, links), pl, seen, bl in zip(seg_frames, polys, faces_seen, body_label):
+        talking = _speaking(turns, t)
         hl = []
-        for s, d in want:
-            pick = pick_person(d.box, persons)
-            poly = outline(pick[1], W, H) if pick is not None else None
-            hl.append({"spk": s, "poly": poly or face_outline(d.box, W, H),
-                       "face": [round(d.box[0] / W, 4), round(d.box[1] / H, 4), round(d.box[2] / W, 4),
-                                round(d.box[3] / H, 4)]})
-        out_frames.append({"t": round(t, 2), "hl": hl})
-        if duration:
-            prog(0.6 + 0.38 * min(1.0, t / duration), "말하는 사람의 윤곽을 그리고 있어요")
+        for s in sorted(talking):
+            p = mapping.get(s)
+            if p is None:
+                continue
+            k = links.get(p)
+            if k is None:
+                k = next((j for j, q in bl.items() if q == p), None)
+            d = seen.get(p)
+            poly = pl[k] if k is not None else None
+            if poly is None and d is not None:
+                poly = face_outline(d.box, W, H)
+            if poly is None:
+                continue
+            item = {"spk": s, "poly": poly}
+            if d is not None:
+                item["face"] = [round(d.box[0] / W, 4), round(d.box[1] / H, 4), round(d.box[2] / W, 4),
+                                round(d.box[3] / H, 4)]
+            else:
+                item["body"] = True  # 얼굴 없이 몸 추적으로 찾음
+            hl.append(item)
+        for q in set(bl.values()):
+            body_times.setdefault(q, []).append(t)
+        if hl:
+            out_frames.append({"t": t, "hl": hl})
+    # 몸으로 보인 시간도 '화면에 보임'에 더한다
+    for s, p in mapping.items():
+        if body_times.get(p):
+            ts = sorted({round(a, 2) for iv in visible.get(s, []) for a in np.arange(iv[0], iv[1], 1 / FACE_FPS)}
+                        | {round(x + k / FACE_FPS, 2) for x in body_times[p] for k in range(2)})
+            visible[s] = intervals(ts, 1 / FACE_FPS)
 
     # 사람 대표 얼굴(화자 카드용)
     out_dir.mkdir(parents=True, exist_ok=True)
