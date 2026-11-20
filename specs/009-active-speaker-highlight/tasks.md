@@ -1,6 +1,6 @@
 ---
 spec: SPEC-009
-updated: 2026-11-19
+updated: 2026-11-20
 ---
 
 # SPEC-009 작업
@@ -22,3 +22,6 @@ updated: 2026-11-19
   - 파일: app/requirements.txt, deploy/fetch_models.sh, deploy/setup_server.sh, infra/deploy.sh
 - [x] T-07 기준선 문서(02·03·04·06), SPEC-008 개정 이력
 - [x] T-08 서버 배포·샘플 재처리·시간 측정·평가셋 회귀 확인
+- [ ] T-09 몸 추적으로 얼굴이 안 보여도 강조 (FR-VIS-07, FR-VIS-08)
+  - 파일: app/whosaid/pipeline/visual.py
+  - 확인: test_label_bodies_keeps_person_when_face_turns_away, 개발 샘플 85~89초(둘 다 뒷모습)
