@@ -219,6 +219,12 @@ def test_offscreen_flags():
 def test_intervals():
     from whosaid.pipeline import visual as V
     assert V.intervals([0.0, 0.1, 0.2, 1.0], 0.1) == [[0.0, 0.3], [1.0, 1.1]]
+    # numpy 값이 들어와도 JSON으로 저장할 수 있어야 한다(서버에서 실제로 난 오류)
+    import json
+    iv = V.intervals(list(np.arange(0, 0.5, 0.1)), 0.1)
+    ev = [E(0, "S1", 0.0, 1.0)]
+    V.offscreen_flags(ev, {"S1": iv}, {"S1"}, any_face=True)
+    json.dumps({"iv": iv, "ev": ev})
 
 
 def test_noise_filter_words_and_speakers():
@@ -233,3 +239,24 @@ def test_noise_filter_words_and_speakers():
     assert [w["text"] for w in kept] == ["네"] and n == 3
     turns = [{"start": 0, "end": 10, "speaker": "A"}, {"start": 10, "end": 10.6, "speaker": "N"}]
     assert noise.noise_speakers(turns, [{"start": 10.1, "end": 10.3, "text": "흠"}]) == {"N"}
+
+
+def test_label_bodies_keeps_person_when_face_turns_away():
+    from whosaid.pipeline import visual as V
+    # 사람 둘이 걷는다. 0~0.4초에 P1 얼굴이 왼쪽 몸에서 보이고(3번), 그 뒤엔 뒤돌아 얼굴이 없다.
+    left = lambda t: [10 + t * 10, 10, 110 + t * 10, 300]   # noqa: E731
+    right = lambda t: [300, 10, 400, 300]                    # noqa: E731
+    frames = []
+    for i in range(10):
+        t = round(i * 0.2, 2)
+        links = {"P1": 0} if i < 3 else {}
+        frames.append((t, [left(t), right(t)], links))
+    lab = V.label_bodies(frames)
+    assert all(f.get(0) == "P1" for f in lab)        # 얼굴이 안 보여도 같은 몸은 P1
+    assert all(1 not in f for f in lab)              # 얼굴 확인이 없는 몸은 모름
+    # 장면 전환 뒤의 몸은 이어 붙이지 않는다
+    lab2 = V.label_bodies(frames, cuts={1.0})
+    assert lab2[4].get(0) == "P1" and lab2[6] == {}
+    # 얼굴 확인이 1번뿐이면 믿지 않는다
+    one = [(t, b, ({"P1": 0} if i == 0 else {})) for i, (t, b, _) in enumerate(frames)]
+    assert all(f == {} for f in V.label_bodies(one))
