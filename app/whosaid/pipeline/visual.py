@@ -283,7 +283,7 @@ def intervals(times: list[float], step: float, gap: float | None = None) -> list
             out[-1][1] = t + step
         else:
             out.append([t, t + step])
-    return [[round(a, 2), round(b, 2)] for a, b in out]
+    return [[round(float(a), 2), round(float(b), 2)] for a, b in out]
 
 
 def offscreen_flags(events: list[dict], visible: dict[str, list[list[float]]], mapped: set[str],
@@ -299,7 +299,7 @@ def offscreen_flags(events: list[dict], visible: dict[str, list[list[float]]], m
             continue
         dur = max(e["end"] - e["start"], 1e-3)
         seen = sum(max(0.0, min(e["end"], b) - max(e["start"], a)) for a, b in visible.get(s, []))
-        e["offscreen"] = seen / dur < min_frac
+        e["offscreen"] = bool(seen / dur < min_frac)
 
 
 # ───────────────────────────── 사람 윤곽(YOLO 분할) ─────────────────────────────

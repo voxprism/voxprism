@@ -219,6 +219,12 @@ def test_offscreen_flags():
 def test_intervals():
     from whosaid.pipeline import visual as V
     assert V.intervals([0.0, 0.1, 0.2, 1.0], 0.1) == [[0.0, 0.3], [1.0, 1.1]]
+    # numpy 값이 들어와도 JSON으로 저장할 수 있어야 한다(서버에서 실제로 난 오류)
+    import json
+    iv = V.intervals(list(np.arange(0, 0.5, 0.1)), 0.1)
+    ev = [E(0, "S1", 0.0, 1.0)]
+    V.offscreen_flags(ev, {"S1": iv}, {"S1"}, any_face=True)
+    json.dumps({"iv": iv, "ev": ev})
 
 
 def test_noise_filter_words_and_speakers():
