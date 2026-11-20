@@ -249,7 +249,7 @@ def process(job_id: str) -> None:
                     V = visual.analyze(d / "preview.mp4", (pinfo.get("width") or 1280, pinfo.get("height") or 720),
                                        turns, excl, d / "faces", config.VISION_DIR,
                                        progress=lambda f, m="": P("visual", f, m or "화면 속 사람을 찾고 있어요"),
-                                       threads=max(1, config.CPU_THREADS // 2))
+                                       threads=config.CPU_THREADS)
                 except Exception as e:  # noqa: BLE001
                     log.exception("화면 분석 실패")
                     warnings.append(f"화면 속 화자 찾기에 실패해 윤곽 강조 없이 자막만 만들었습니다: {str(e)[:120]}")

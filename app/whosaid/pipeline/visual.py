@@ -532,7 +532,11 @@ def analyze(video: Path, size: tuple[int, int], turns: list[dict], exclusive: li
 
     # 6) 강조 윤곽: 누군가 말하는 SEG_FPS 프레임마다 사람 분할 → 얼굴로 확인된 사람의 몸을 추적해서
     #    얼굴이 안 보이는 순간(뒤돌기·옆모습·가림)에도 같은 사람의 몸에 윤곽을 그린다 (FR-VIS-07)
-    seg = PersonSeg(model_dir / MODEL_FILES["seg"], threads=threads)
+    # 프레임 하나에 쓰레드를 늘리는 것보다 프레임 여러 개를 동시에 돌리는 쪽이 빠르다
+    # (서버 실측: 4쓰레드 1장씩 105ms/장 → 1쓰레드 8장 동시 45ms/장)
+    from concurrent.futures import ThreadPoolExecutor
+    seg = PersonSeg(model_dir / MODEL_FILES["seg"], threads=1)
+    pool = ThreadPoolExecutor(max(1, threads))
     by_time: dict[float, list[Det]] = {}
     for tr in named:
         if tr.person in face_of:
@@ -542,12 +546,25 @@ def analyze(video: Path, size: tuple[int, int], turns: list[dict], exclusive: li
     seg_frames: list[tuple[float, list, dict]] = []
     polys: list[list] = []
     faces_seen: list[dict[str, Det]] = []
-    for t, img in read_frames(video, SEG_FPS, (W, H)) if face_of else []:
+    def batches(n: int = 16):
+        buf = []
+        for t, img in read_frames(video, SEG_FPS, (W, H)) if face_of else []:
+            if _speaking(turns, t):
+                buf.append((round(t, 2), img.copy()))
+            if len(buf) >= n:
+                yield buf
+                buf = []
+        if buf:
+            yield buf
+
+    def frames_with_persons():
+        for b in batches():
+            for (t, _), persons in zip(b, pool.map(lambda x: seg(x[1]), b)):
+                yield t, persons
+
+    for t, persons in frames_with_persons():
         if duration:
             prog(0.6 + 0.36 * min(1.0, t / duration), "말하는 사람의 윤곽을 그리고 있어요")
-        if not _speaking(turns, t):
-            continue
-        persons = seg(img)
         links: dict[str, int | None] = {}
         seen: dict[str, Det] = {}
         for d in by_time.get(round(t, 2), []):
@@ -557,6 +574,7 @@ def analyze(video: Path, size: tuple[int, int], turns: list[dict], exclusive: li
         seg_frames.append((round(t, 2), [b for b, _ in persons], links))
         polys.append([outline(m, W, H) for _, m in persons])
         faces_seen.append(seen)
+    pool.shutdown()
     body_label = label_bodies(seg_frames, cuts)
     out_frames = []
     body_times: dict[str, list[float]] = {}
